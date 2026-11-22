@@ -21302,6 +21302,25 @@ in CLAUDE.md describes.
   SH and reach. Avoid a filtered 3D texture (drops the reach mask) and
   L0-only SH. (c) The C/GLSL blend parity check is DOOM-0655; B4's
   two-pass GLSL rewrite has no C counterpart test yet.
+  B5 built 2026-11-22: each probe has a 32-bin polar wall map, drawn
+  on the CPU from its own position and height, in place of the ±x and
+  ±y reach; ±z reach stays. A two-sided line whose opening does not
+  hold the probe's height blocks it. A void column's probes move to an
+  air sample in the cell, clear of walls where one is. Two traps found
+  on the way: a long wall cut into linedefs, seen edge-on, put joints
+  in the bins (probe maps now write centre rays only); and Ultra's
+  relief panels sink lit faces up to 12 units behind the line (bins
+  hold a point 14 units behind the wall, square to it). Magenta
+  fallback debug build, E1M1, B4 -> B5 fallback pixels: start room
+  1018 -> 0, shot-0100 spot 0 -> 0, shot-0103 spot 551 -> 0. All 68
+  IWAD maps load and bake, no non-finite values; E1M1 probes 2831 ->
+  4111, inside solid 19 -> 19. Real display, quiet machine, Solid
+  rasterised 100 %, scene pass B4 -> B5: E1M1 0.83 -> 1.01 ms, E1M4
+  1.57 -> 1.98, E3M6 4.47 -> 4.69, MAP28 2.33 -> 2.69. MAP24 (Solid,
+  50 %): bake passes 26 -> 34 ms, wall maps 30.5 ms on the CPU.
+  Vestige's per-cube open bit is the lever if the read cost matters.
+  Look: B4 and B5 captures match closely (d0652/cmp_b5_*.png); for
+  the user to judge with the earlier B2 and B3 pictures.
   **Layman:** The smooth view lights the map in invisible patches, and the light jumps where two patches meet, drawing straight lines on floors.
   Kind: fix.
   Source: user-2026-11-21.

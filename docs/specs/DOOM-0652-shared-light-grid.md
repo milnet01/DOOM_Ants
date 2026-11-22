@@ -1,7 +1,7 @@
 <!-- ants-spec-format: 1 -->
 # DOOM-0652 — Light that fades smoothly: a shared light grid, wall-true lamp shadows and blended bounce light
 
-**Status:** accepted (2026-11-21). B1 to B4 built; B4 awaits the peer code reviews.
+**Status:** accepted (2026-11-21). B1 to B4 built and peer-reviewed; B5 in build.
 **Kind:** fix.
 **Source:** ROADMAP DOOM-0652 (user report 2026-11-21, light lab on E1M1).
 **Also closes:** DOOM-0649 (dim lights crowd bright ones out of a subsector's 16 slots): the
@@ -155,8 +155,13 @@ Probes sit on a 3D lattice:
   ceiling, so a room lower than the spacing still has probes (`lgrid::ProbeLayerZ`).
   Other layers are not baked.
 
-A column whose seep cell has no air (`RB_SeepCellAir`: inside a wall, past the map, or a
-shut door) gets no probes. As a backstop, the bake marks a probe invalid once more than
+A column whose seep cell centre has no air (`RB_SeepCellAir`: inside a wall, past the map, or
+a shut door) moves its probes to an air point of a 4 × 4 grid of samples inside the cell,
+and takes that point's floor and ceiling (B5). The sample nearest the centre wins among
+those `RB_PROBE_MARGIN` clear of every blocking line, then among the rest: a probe hugging a
+wall sees the backs of its faces and the bake marks it invalid. Only a cell that some
+linedef crosses is searched: a cell no line crosses is all void when its centre is. A cell
+with no air sample gets no probes. As a backstop, the bake marks a probe invalid once more than
 `BAKE_BACK_MAX` of its rays land on the back of a surface, and stops tracing it. Readers
 drop it like an unbaked one.
 
@@ -166,8 +171,28 @@ cast the same rays to the same hits, so they trace no shadow rays: they add the 
 pass's direct light back and copy its reach and valid flag.
 
 `giIrradianceAt(pos, n)` blends the 8 lattice corners around `pos + n * RB_PROBE_NBIAS`
-trilinearly. A corner is dropped when it is not baked, or when its reach toward the point
-falls short of it by more than `RB_PROBE_SLACK`. Its weight goes to the corners left. When
+trilinearly. A corner is dropped when it is not baked, or when a wall stands between it and
+the point. Its weight goes to the corners left. The weights
+are the lattice's, also for a moved probe; the error that leaves is accepted.
+
+"A wall between" is tested in two parts (B5):
+
+- **Across.** Each probe has a polar wall map of `RB_PROBE_POLAR_BINS` bins
+  (`lgrid::BuildProbePolarMap`), drawn on the CPU from its own position as § 4.4 draws a
+  light's, with two differences. A wall writes only the bins whose centre ray it crosses:
+  seen edge-on, each linedef of a long wall is narrower than a bin, and a ray clamped to its
+  span meets a joint far nearer than the wall. And each bin holds the distance to a point
+  `RB_PROBE_WALL_SLACK` behind the wall, square to it, because Ultra's relief panels
+  (`relief.csv`) sink a lit surface up to 12 units behind its line, and along a slanting ray
+  that depth grows. Its range is `RB_PROBE_POLAR_REACH` cells. A two-sided line whose
+  opening does not hold the probe's height blocks it as a shut one would, so a probe under a
+  ledge does not see the floor on top. The read interpolates the wall distance between the
+  two nearest bins, as `PolarLit` does. A probe with no wall in range stores no map and is
+  never blocked across.
+- **Up and down.** The ±z reach, within `RB_PROBE_SLACK`, as before. A 2D map does not know
+  floors and ceilings.
+
+The ±x and ±y reach is still baked and no longer read. When
 every present corner falls short, they blend with no reach test (UT_Ants' `indirectAt`), as
 a point on a ledge between probes would otherwise go black. With no corner present the
 answer is zero. `lgrid::ProbeBlendSH` is the C copy the tests read.
@@ -185,7 +210,9 @@ answer is zero. `lgrid::ProbeBlendSH` is the C copy the tests read.
   `lightBuf`.
 - Polar maps: lights × `RASTER_POLAR_BINS` floats, in the light buffer after each light table.
 - Probes: a header, one index float per lattice point, and a 24-float record (position,
-  valid flag, SH, reach) per baked probe; `light_grid.h` gives the layout. The index is
+  valid flag, SH, reach, map start) per baked probe, then the probes' polar maps end to end;
+  `light_grid.h` gives the layout. A map start is a float index, so the buffer stays under
+  2^24 floats or the maps are left out and every probe reads as open across. The index is
   bounded by the seep field's `RB_SEEP_MAXDIM` squared, times `RB_PROBE_MAXLAYERS`. In the
   card's own memory where it can be; the bake's CPU check reads a copy in cached system
   memory, since an uncached read of the card's memory runs at bus speed.
@@ -199,7 +226,7 @@ answer is zero. `lgrid::ProbeBlendSH` is the C copy the tests read.
 - Per-frame CPU for the light grid's dynamic part stays under the 1 ms that
   `BuildRasterPointLights` was held to.
 - The load-time bake (probes and static polar maps) fits under the load screen. Measured
-  2026-11-22 on the RX 6600, Solid, real display: MAP24's probe bake takes 32.5 ms. A run
+  2026-11-22 on the RX 6600, Solid, real display: MAP24's probe bake takes 35.8 ms, and its probes' wall maps 30.5 ms on the CPU (B5). A run
   under Xvfb times the bake many times slower, so quote bake times from a real display. A door settling must not cost a frame over DOOM-0170 INV-3's
   1.5× budget.
 
@@ -219,6 +246,9 @@ Each stage ends with `make`, `make test` and the § 8 captures.
 - **B4 — Measure and tune.** Load and bake time on the largest IWAD map, FPS, frame-time trace,
   the look at the § 8 spots. Ask UT_Ants and Vestige for a code review (the user's request,
   2026-11-21).
+- **B5 — Probe wall maps and void columns.** The per-probe polar map in place of the ±x and
+  ±y reach, and void-column probes moved into the cell's air (§ 4.5). Check at E1M1's start
+  room with the fallback pixels painted magenta.
 
 ## 8. Invariants
 
@@ -253,6 +283,15 @@ Each stage ends with `make`, `make test` and the § 8 captures.
 - **INV-8** Classic is unchanged. *Breaks when:* a change reaches the software renderer.
   *Test:* `scripts/ab_capture.sh` in Classic at E1M1's start, before against after. No pixel
   differs.
+- **INV-9** A probe behind a wall at any angle adds nothing to a point, and a probe that sees
+  the point past a pillar's edge still adds. *Breaks when:* the across test goes back to
+  axis reach, or a map is drawn from the lattice point instead of the probe. *Test:*
+  `tests/light_grid_test.cpp` blends a point with a 45-degree wall between it and one bright
+  corner, and a point beside a pillar seen by that corner.
+- **INV-10** A two-sided line blocks a probe whose height its opening does not hold, and does
+  not block one whose height it does. *Breaks when:* an open line is skipped whatever the
+  probe's height. *Test:* `tests/light_grid_test.cpp` draws a ledge line's map from below and
+  from within its opening.
 
 ## 9. Alternatives considered (and rejected)
 
@@ -279,11 +318,15 @@ Each stage ends with `make`, `make test` and the § 8 captures.
   The fix would be per-bin opening heights, checked against the fragment's height.
 - Ceilings take the same polar map as floors. A ceiling lamp above a lip is not shadowed by the
   lip.
-- INV-6 holds only for walls along the axes: reach is measured along ±x, ±y and ±z, so a
-  diagonal wall does not block a corner. When no corner reaches, all present corners blend
-  unmasked, so a corridor narrower than a cell takes its neighbours' light (Vestige,
-  2026-11-22). Diagonal reach rays hid light from E1M1's start-room pillars. The planned fix
-  is a polar wall map per probe (ROADMAP DOOM-0652, B5).
+- When no corner reaches, all present corners still blend unmasked. B5's moved probes give a
+  corridor narrower than a cell probes of its own. A debug build painting those pixels
+  magenta showed none at E1M1's start room or either § 8 spot (2026-11-22); other maps are
+  unchecked.
+- A pillar thinner than a probe map's bin can go unseen, so one corner may see past it.
+- A point more than `RB_PROBE_WALL_SLACK` behind its linedef, square to it, reads as behind
+  the wall. Relief deeper than that would bring the fallback back.
+- A probe judges a two-sided line by its own height alone. A probe below a window's sill
+  does not see through the window even where a sloping sight line would.
 
 ## 11. What checks this
 
@@ -297,6 +340,8 @@ Each stage ends with `make`, `make test` and the § 8 captures.
 | INV-6 | `tests/light_grid_test.cpp` |
 | INV-7 | Partial: one capture spot |
 | INV-8 | `scripts/ab_capture.sh` |
+| INV-9 | `tests/light_grid_test.cpp` |
+| INV-10 | `tests/light_grid_test.cpp` |
 | The shader and C copies of the falloff and grid constants agree | `tests/shader_mirror_test.cpp`, once B1 adds the pairs |
 
 ## 12. Cross-doc impact

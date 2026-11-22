@@ -59,3 +59,24 @@ int RB_LightWalls(rb_lwall_t* out, int max)
     }
     return numlines;
 }
+
+int RB_LightWallGaps(float* lo, float* hi, int max)
+{
+    int i;
+    if (!lo || !hi || max < numlines)
+        return 0;
+    for (i = 0; i < numlines; i++)
+    {
+        const line_t* ld = &lines[i];
+        lo[i] = hi[i] = 0.0f;
+        if (!(ld->flags & ML_TWOSIDED) || !ld->backsector)
+            continue;
+        {
+            const sector_t* f = ld->frontsector;
+            const sector_t* b = ld->backsector;
+            lo[i] = (float)(f->floorheight   > b->floorheight   ? f->floorheight   : b->floorheight)   / FRACUNIT;
+            hi[i] = (float)(f->ceilingheight < b->ceilingheight ? f->ceilingheight : b->ceilingheight) / FRACUNIT;
+        }
+    }
+    return numlines;
+}

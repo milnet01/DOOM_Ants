@@ -283,22 +283,23 @@ enum : uint32_t {
 };
 struct Wall2D { float x1, y1, x2, y2; uint32_t kind; };
 
-// The diamond angle of (dx, dy) in bins, [0, RASTER_POLAR_BINS).
-inline float PolarCoord(float dx, float dy)
+// The diamond angle of (dx, dy) in bins, [0, bins). A probe's map (B5) uses fewer bins
+// than a light's.
+inline float PolarCoord(float dx, float dy, int bins = (int)RASTER_POLAR_BINS)
 {
     const float s = std::fabs(dx) + std::fabs(dy);
     if (!(s > 0.0f)) return 0.0f;
     float p;
     if (dy >= 0.0f) p = dx >= 0.0f ? dy / s : 1.0f - dx / s;
     else            p = dx <  0.0f ? 2.0f - dy / s : 3.0f + dx / s;
-    p *= (float)RASTER_POLAR_BINS * 0.25f;
-    return p >= (float)RASTER_POLAR_BINS ? p - (float)RASTER_POLAR_BINS : p;
+    p *= (float)bins * 0.25f;
+    return p >= (float)bins ? p - (float)bins : p;
 }
 
 // The direction of polar coordinate p (bins), with |dx| + |dy| = 1.
-inline void PolarDir(float p, float& dx, float& dy)
+inline void PolarDir(float p, float& dx, float& dy, int bins = (int)RASTER_POLAR_BINS)
 {
-    float q = p * (4.0f / (float)RASTER_POLAR_BINS);
+    float q = p * (4.0f / (float)bins);
     q -= 4.0f * std::floor(q * 0.25f);
     const int   quad = std::min((int)q, 3);
     const float t    = q - (float)quad;
@@ -311,20 +312,32 @@ inline void PolarDir(float p, float& dx, float& dy)
     }
 }
 
-// Fill out[RASTER_POLAR_BINS] for a light at (lx, ly) with range R, from walls[cand[k]]
+// Fill out[bins] for a light at (lx, ly) with range R, from walls[cand[k]]
 // for k < n. A bin with no blocking wall in range holds R, so the distance a fragment
 // interpolates never jumps to infinity at a wall's end. A bin holds the wall distance
 // along its centre ray, with the ray clamped to the wall's own angular span, so a wall
 // narrower than a bin still blocks the bin it falls in.
+//
+// With centresOnly, a wall writes only the bins whose centre ray it crosses, with no clamp.
+// A probe's map (B5) needs this: its bins are wide, and seen edge-on from a probe near it,
+// every linedef of a long wall is narrower than a bin, so each clamped ray meets a joint far
+// nearer than the wall along the bin's centre, and a point in front of the wall reads
+// blocked. A pillar thinner than a bin can then go unseen, which errs toward light.
+//
+// behind moves each written distance that far past the wall, measured square to the wall,
+// so a reader compares against the map with no slack of its own. Along a slanting ray the
+// same depth is longer, by 1 / sin of the angle between ray and wall, capped at 4x.
 //
 // A one-sided wall blocks only light that reaches its front. A light behind one is inside
 // solid map (a cluster centre that fell inside a pillar), and lighting the room round the
 // pillar beats lighting nothing. In a closed map, the first one-sided wall any ray from
 // open air meets is met from the front, so this skips no real occluder.
 inline void BuildPolarMap(float lx, float ly, float R, const Wall2D* walls,
-                          const uint32_t* cand, int n, float* out)
+                          const uint32_t* cand, int n, float* out,
+                          int bins = (int)RASTER_POLAR_BINS, bool centresOnly = false,
+                          float behind = 0.0f)
 {
-    const int B = (int)RASTER_POLAR_BINS;
+    const int B = bins;
     for (int b = 0; b < B; b++) out[b] = R;
     for (int k = 0; k < n; k++)
     {
@@ -340,21 +353,28 @@ inline void BuildPolarMap(float lx, float ly, float R, const Wall2D* walls,
         // Sweep counter-clockwise from s to e.
         const float sx = cr > 0.0f ? ax : bx, sy = cr > 0.0f ? ay : by;
         const float ex = cr > 0.0f ? bx : ax, ey = cr > 0.0f ? by : ay;
-        const float ps = PolarCoord(sx, sy);
-        float       pe = PolarCoord(ex, ey);
+        const float ps = PolarCoord(sx, sy, B);
+        float       pe = PolarCoord(ex, ey, B);
         if (pe < ps) pe += (float)B;
         const float wx = ex - sx, wy = ey - sy;
         for (int bb = (int)std::floor(ps); bb <= (int)std::floor(pe); bb++)
         {
+            if (centresOnly && ((float)bb + 0.5f < ps || (float)bb + 0.5f > pe))
+                continue;                            // centres sit at bb + 0.5
             float dx, dy;
-            PolarDir(std::min(std::max((float)bb + 0.5f, ps), pe), dx, dy);
+            PolarDir(std::min(std::max((float)bb + 0.5f, ps), pe), dx, dy, B);
             // The ray t * d meets s + u * w at t = cross(s, w) / cross(d, w).
             const float den = dx * wy - dy * wx;
             if (den == 0.0f) continue;
             const float t = (sx * wy - sy * wx) / den;
             if (!(t > 0.0f)) continue;
+            const float dl = std::sqrt(dx * dx + dy * dy);
+            float past = 0.0f;
+            if (behind > 0.0f)
+                past = std::min(behind * dl * std::sqrt(wx * wx + wy * wy) / std::fabs(den),
+                                4.0f * behind);
             float& o = out[bb % B];
-            o = std::min(o, t * std::sqrt(dx * dx + dy * dy));
+            o = std::min(o, t * dl + past);
         }
     }
 }
@@ -417,7 +437,8 @@ inline bool PolarBoxMaySee(const float* map, float lx, float ly, float cx, float
 //   header  PROBE_HDR floats: origin x, y, z, cell (xy spacing), dz, nx, ny, nz
 //   index   nx * ny * nz floats, x fastest: the point's record number, or -1 if none
 //   records PROBE_REC floats each: pos[3], valid, SH-L1 radiance R[4] G[4] B[4],
-//           reach +x -x +y -y +z -z, two pad
+//           reach +x -x +y -y +z -z, map start, one pad
+//   maps    RB_PROBE_POLAR_BINS floats each (B5), for the probes whose map start is >= 0
 // The index holds float values, not bit patterns, so no read can mistake one for a NaN.
 // "valid" is the bake's verdict: 0 when the point turned out to sit inside solid map.
 
@@ -434,6 +455,23 @@ static const float RB_PROBE_SLACK     = 8.0f;
 static const float RB_PROBE_MARGIN    = 8.0f;
 static const uint32_t PROBE_HDR = 8;    // MUST equal gi_probe.glsl's GI_PROBE_HDR
 static const uint32_t PROBE_REC = 24;   // MUST equal gi_probe.glsl's GI_PROBE_REC
+// Record float 22: the buffer index of the probe's polar map, or -1 for a probe with no wall
+// in range (B5). A float index, so the whole buffer must stay under 2^24 floats.
+static const uint32_t PROBE_MAP   = 22;
+static const size_t   PROBE_FLOAT_LIMIT = (size_t)1 << 24;
+// B5 (spec 4.5): each probe's polar wall map. Bins round the probe, few because a probe only
+// answers for the cube of lattice points around it. MUST equal gi_probe.glsl's
+// GI_PROBE_BINS.
+static const int      RB_PROBE_POLAR_BINS  = 32;
+// How far behind a wall, square to it, a probe still sees a point. Ultra's relief panels
+// (relief.csv) sink a lit surface up to 12 units behind its linedef; the normal offset
+// does not lift a recess's side faces out of it.
+static const float    RB_PROBE_WALL_SLACK  = 14.0f;
+// The map's range in lattice cells. A point a probe answers for lies within sqrt(2) cells
+// of its lattice point plus the normal offset, and a moved probe sits up to half a cell's
+// diagonal further off: about 2.2 cells. A bin with no wall in range holds the range, and
+// the read interpolates toward it, so the range sits well past that.
+static const float    RB_PROBE_POLAR_REACH = 4.0f;
 
 struct ProbeLattice { float ox, oy, oz, cell, dz; int nx, ny, nz; };
 
@@ -468,10 +506,49 @@ inline float ProbeLayerZ(float z, float dz, float f, float c)
     return std::min(std::max(z, lo), hi);
 }
 
+// B5: fill out[RB_PROBE_POLAR_BINS] for a probe at (px, py, pz) from walls[cand[k]], k < n.
+// gapLo and gapHi hold each wall's opening (the higher floor and the lower ceiling of its
+// two sides). An open two-sided line whose opening does not hold pz blocks the probe as a
+// shut one would, so a probe under a ledge does not see the ledge's top. Returns whether any
+// bin holds a wall nearer than R; a map with none need not be stored.
+inline bool BuildProbePolarMap(float px, float py, float pz, float R, const Wall2D* walls,
+                               const float* gapLo, const float* gapHi,
+                               const uint32_t* cand, int n, float* out)
+{
+    std::vector<Wall2D>   w((size_t)std::max(n, 0));
+    std::vector<uint32_t> ids((size_t)std::max(n, 0));
+    for (int k = 0; k < n; k++)
+    {
+        const uint32_t id = cand[k];
+        w[(size_t)k]   = walls[id];
+        ids[(size_t)k] = (uint32_t)k;
+        if (w[(size_t)k].kind == LW_OPEN && (pz < gapLo[id] || pz > gapHi[id]))
+            w[(size_t)k].kind = LW_CLOSED;
+    }
+    BuildPolarMap(px, py, R, w.data(), ids.data(), n, out, RB_PROBE_POLAR_BINS, true,
+                  RB_PROBE_WALL_SLACK);
+    for (int b = 0; b < RB_PROBE_POLAR_BINS; b++)
+        if (out[b] < R) return true;
+    return false;
+}
+
+// B5: does a probe see the point (dx, dy) from it across its map? The wall distance is
+// interpolated between the two nearest bins, as PolarLit does; the map already holds
+// RB_PROBE_WALL_SLACK past each wall. gi_probe.glsl's giProbeSees is the copy that runs.
+inline bool ProbeSeesAcross(const float* map, float dx, float dy)
+{
+    const int   B  = RB_PROBE_POLAR_BINS;
+    const float p  = PolarCoord(dx, dy, B) - 0.5f;
+    const float fl = std::floor(p);
+    const int   i0 = ((int)fl + B) % B, i1 = (i0 + 1) % B;
+    const float wall = map[i0] + (map[i1] - map[i0]) * (p - fl);
+    return std::sqrt(dx * dx + dy * dy) <= wall;
+}
+
 // The 12 SH-L1 coefficients blended at world point p (already offset along its normal)
 // from the 8 corners around it: a corner without a valid probe is dropped, and so is one
-// whose reach falls short of p; the weight left is renormalised. If every present corner
-// falls short, they are blended unmasked rather than giving black (UT_Ants' indirectAt).
+// with a wall between it and p (B5: its polar map across, its z reach up and down); the
+// weight left is renormalised. If every present corner is blocked, they are blended unmasked rather than giving black (UT_Ants' indirectAt).
 // Returns false with sh zeroed when no corner has a probe. gi_probe.glsl's
 // giIrradianceAt is the copy that runs; this one is what the tests read.
 inline bool ProbeBlendSH(const float* buf, float px, float py, float pz, float sh[12])
@@ -499,11 +576,11 @@ inline bool ProbeBlendSH(const float* buf, float px, float py, float pz, float s
             continue;
         float w = 1.0f;
         for (int a = 0; a < 3; a++) w *= o[a] ? f[a] : 1.0f - f[a];
+        // B5: across by the probe's polar map, up and down by its z reach (spec 4.5).
         const float d[3] = { px - r[0], py - r[1], pz - r[2] };
-        bool reaches = true;
-        for (int a = 0; a < 3; a++)
-            if (std::fabs(d[a]) > (d[a] >= 0.0f ? r[16 + 2 * a] : r[17 + 2 * a]) + RB_PROBE_SLACK)
-                reaches = false;
+        bool reaches = std::fabs(d[2]) <= (d[2] >= 0.0f ? r[20] : r[21]) + RB_PROBE_SLACK;
+        if (reaches && r[PROBE_MAP] >= 0.0f)
+            reaches = ProbeSeesAcross(buf + (size_t)r[PROBE_MAP], d[0], d[1]);
         for (int k = 0; k < 12; k++) all[k] += w * r[4 + k];
         wAll += w;
         if (!reaches)

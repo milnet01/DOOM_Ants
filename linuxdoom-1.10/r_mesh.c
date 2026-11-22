@@ -1886,6 +1886,17 @@ int RB_SeepCellAir(const rb_seep_t* f, int ix, int iy, float* fz, float* cz)
     return 1;
 }
 
+int RB_PointAir(float x, float y, float* fz, float* cz)
+{
+    rb_cellgeom_t c;
+    RB_CellGeomAtPoint(x, y, 0, 0, &c);
+    if (c.solid || c.sec < 0)
+        return 0;
+    if (fz) *fz = c.fz;
+    if (cz) *cz = c.cz;
+    return 1;
+}
+
 void RB_FreeSeepField(rb_seep_t* f)
 {
     if (!f)

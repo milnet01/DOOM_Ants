@@ -17,16 +17,37 @@
 // ProbesRO is the baked probe lattice (DOOM-0652 B3), laid out as light_grid.h says:
 // header (origin xyz, cell, dz, nx, ny, nz), index (record number or -1 per lattice point),
 // then 24-float records: pos[3], valid, channel-major radiance SH R[4] G[4] B[4], reach
-// +x -x +y -y +z -z, pad. TriSs maps a hit triangle's primitive index to its subsector.
+// +x -x +y -y +z -z, map start, pad, then the probes' polar wall maps (B5). TriSs maps a hit triangle's primitive index to its subsector.
 layout(buffer_reference, scalar) readonly buffer ProbesRO { float p[]; };
 layout(buffer_reference, scalar) readonly buffer TriSs    { uint  s[]; };
 
-// MUST equal light_grid.h's PROBE_HDR, PROBE_REC, RB_PROBE_NBIAS and RB_PROBE_SLACK
-// (shader_mirror_test.cpp).
+// MUST equal light_grid.h's PROBE_HDR, PROBE_REC, PROBE_MAP, RB_PROBE_POLAR_BINS,
+// RB_PROBE_NBIAS and RB_PROBE_SLACK (shader_mirror_test.cpp).
 const uint  GI_PROBE_HDR   = 8u;
 const uint  GI_PROBE_REC   = 24u;
+const uint  GI_PROBE_MAP   = 22u;
+const uint  GI_PROBE_BINS  = 32u;
 const float GI_PROBE_NBIAS = 8.0;
 const float GI_PROBE_SLACK = 8.0;
+
+// DOOM-0652 B5: does the probe whose polar map starts at m see the point d from it across?
+// light_grid.h's PolarCoord (diamond angle, GI_PROBE_BINS bins) and ProbeSeesAcross: the
+// wall distance interpolated between the two nearest bins. The map holds its own slack.
+bool giProbeSees(ProbesRO pr, uint m, vec2 d)
+{
+    float s = abs(d.x) + abs(d.y);
+    if (s <= 0.0) return true;
+    float p = d.y >= 0.0 ? (d.x >= 0.0 ? d.y / s : 1.0 - d.x / s)
+                         : (d.x <  0.0 ? 2.0 - d.y / s : 3.0 + d.x / s);
+    p *= float(GI_PROBE_BINS) * 0.25;
+    if (p >= float(GI_PROBE_BINS)) p -= float(GI_PROBE_BINS);
+    p -= 0.5;
+    float fl   = floor(p);
+    uint  i0   = uint(int(fl) + int(GI_PROBE_BINS)) % GI_PROBE_BINS;
+    uint  i1   = (i0 + 1u) % GI_PROBE_BINS;
+    float wall = mix(pr.p[m + i0], pr.p[m + i1], p - fl);
+    return length(d) <= wall;
+}
 
 // The diffuse reflected-radiance factor (multiply by surface albedo) of the radiance SH
 // sh (R[4] G[4] B[4]) along normal n. Convolving with the clamped-cosine kernel gives
@@ -43,8 +64,8 @@ vec3 giEvalSH(vec4 r, vec4 g, vec4 b, vec3 n)
 // The bounce light at world point pos on a surface facing n: the SH of the 8 lattice
 // corners around pos + n * GI_PROBE_NBIAS, blended trilinearly and evaluated once (the
 // evaluation is linear, so this equals blending the corners' light). A corner with no
-// valid probe is dropped, and so is one whose reach falls short of the point; the weight
-// left is renormalised. When every present corner falls short they blend unmasked, and
+// valid probe is dropped, and so is one with a wall between it and the point; the weight
+// left is renormalised. When every present corner is blocked they blend unmasked, and
 // with none present the answer is zero. light_grid.h's ProbeBlendSH is the C copy the
 // tests read; change both together.
 vec3 giIrradianceAt(ProbesRO pr, vec3 pos, vec3 n)
@@ -60,7 +81,7 @@ vec3 giIrradianceAt(ProbesRO pr, vec3 pos, vec3 n)
     ivec3 bi   = ivec3(bf);
 
     // DOOM-0652 B4: two passes, so a corner's 12 SH floats are fetched only when the
-    // blend uses it. The first reads each corner's position and reach; the second blends
+    // blend uses it. The first tests whether each corner sees the point; the second blends
     // the corners that reach, or every present one when none does.
     uint  rb[8];
     float rw[8];
@@ -82,11 +103,14 @@ vec3 giIrradianceAt(ProbesRO pr, vec3 pos, vec3 n)
         rb[k] = b;
         rw[k] = share.x * share.y * share.z;
         present |= 1u << k;
+        // B5: across by the probe's polar map, up and down by its z reach (spec 4.5).
         vec3  d     = x - vec3(pr.p[b], pr.p[b + 1u], pr.p[b + 2u]);
-        vec3  reach = vec3(d.x >= 0.0 ? pr.p[b + 16u] : pr.p[b + 17u],
-                           d.y >= 0.0 ? pr.p[b + 18u] : pr.p[b + 19u],
-                           d.z >= 0.0 ? pr.p[b + 20u] : pr.p[b + 21u]);
-        if (!any(greaterThan(abs(d), reach + GI_PROBE_SLACK)))
+        float reach = d.z >= 0.0 ? pr.p[b + 20u] : pr.p[b + 21u];
+        bool  sees  = abs(d.z) <= reach + GI_PROBE_SLACK;
+        float m     = pr.p[b + GI_PROBE_MAP];
+        if (sees && m >= 0.0)
+            sees = giProbeSees(pr, uint(m), d.xy);
+        if (sees)
             reaching |= 1u << k;
     }
     float wR = 0.0;

@@ -192,6 +192,9 @@ int main()
         same(gp, "GI_PROBE_REC",   lg, "PROBE_REC");
         same(gp, "GI_PROBE_NBIAS", lg, "RB_PROBE_NBIAS");
         same(gp, "GI_PROBE_SLACK", lg, "RB_PROBE_SLACK");
+        // B5: where a record keeps its polar map, and the map's bin count.
+        same(gp, "GI_PROBE_MAP",   lg, "PROBE_MAP");
+        same(gp, "GI_PROBE_BINS",  lg, "RB_PROBE_POLAR_BINS");
     }
     {
         const size_t at = vk.find("RG_ORIGIN_X, RG_ORIGIN_Y");

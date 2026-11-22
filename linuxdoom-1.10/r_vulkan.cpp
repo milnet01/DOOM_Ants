@@ -8514,6 +8514,41 @@ static void PackRasterLight(std::vector<uint32_t>& out, float x, float y, float 
     }
 }
 
+// DOOM-0652: list, for each cell of grid gr, the walls whose box overlaps it, as offsets
+// at[cell .. cell + 1) into idx. The raster lights (B2) and the probes (B5) share it.
+static void IndexWallsByCell(const lgrid::Grid& gr, const std::vector<lgrid::Wall2D>& walls,
+                             std::vector<uint32_t>& at, std::vector<uint32_t>& idx)
+{
+    const int n = (int)walls.size();
+    const size_t cells = (size_t)gr.w * gr.h;
+    auto cellOf = [&](float v, float o, int hi) {
+        return std::min(std::max((int)std::floor((v - o) / gr.cell + 0.5f), 0), hi);
+    };
+    at.assign(cells + 1, 0u);
+    for (int pass = 0; pass < 2; pass++)
+    {
+        if (pass == 1)
+        {
+            for (size_t c = 0; c < cells; c++) at[c + 1] += at[c];
+            idx.assign(at[cells], 0u);
+        }
+        std::vector<uint32_t> fill(pass == 1 ? cells : 0, 0u);
+        for (int i = 0; i < n; i++)
+        {
+            const lgrid::Wall2D& w = walls[(size_t)i];
+            const int x0 = cellOf(std::min(w.x1, w.x2), gr.ox, gr.w - 1), x1 = cellOf(std::max(w.x1, w.x2), gr.ox, gr.w - 1);
+            const int y0 = cellOf(std::min(w.y1, w.y2), gr.oy, gr.h - 1), y1 = cellOf(std::max(w.y1, w.y2), gr.oy, gr.h - 1);
+            for (int iy = y0; iy <= y1; iy++)
+            for (int ix = x0; ix <= x1; ix++)
+            {
+                const size_t c = (size_t)iy * gr.w + ix;
+                if (pass == 0) at[c + 1]++;
+                else           idx[at[c] + fill[c]++] = (uint32_t)i;
+            }
+        }
+    }
+}
+
 // DOOM-0652 B2: read the map's linedefs as light blockers (RB_LightWalls) and list, for
 // each grid cell, the lines whose box overlaps it, so a light gathers only the lines near
 // it. Lines never move in DOOM; only whether a two-sided one is shut changes.
@@ -8527,48 +8562,22 @@ static void BuildRasterWalls()
     g.rasterWallStamp.assign((size_t)n, 0u);
     g.rasterWallTick = 0;
 
-    const lgrid::Grid& gr = g.rasterGrid;
-    const size_t cells = (size_t)gr.w * gr.h;
-    auto cellOf = [&](float v, float o, int hi) {
-        return std::min(std::max((int)std::floor((v - o) / gr.cell + 0.5f), 0), hi);
-    };
-    g.rasterWallAt.assign(cells + 1, 0u);
-    for (int pass = 0; pass < 2; pass++)
-    {
-        if (pass == 1)
-        {
-            for (size_t c = 0; c < cells; c++) g.rasterWallAt[c + 1] += g.rasterWallAt[c];
-            g.rasterWallIdx.assign(g.rasterWallAt[cells], 0u);
-        }
-        std::vector<uint32_t> fill(pass == 1 ? cells : 0, 0u);
-        for (int i = 0; i < n; i++)
-        {
-            const lgrid::Wall2D& w = g.rasterWalls[(size_t)i];
-            const int x0 = cellOf(std::min(w.x1, w.x2), gr.ox, gr.w - 1), x1 = cellOf(std::max(w.x1, w.x2), gr.ox, gr.w - 1);
-            const int y0 = cellOf(std::min(w.y1, w.y2), gr.oy, gr.h - 1), y1 = cellOf(std::max(w.y1, w.y2), gr.oy, gr.h - 1);
-            for (int iy = y0; iy <= y1; iy++)
-            for (int ix = x0; ix <= x1; ix++)
-            {
-                const size_t c = (size_t)iy * gr.w + ix;
-                if (pass == 0) g.rasterWallAt[c + 1]++;
-                else           g.rasterWallIdx[g.rasterWallAt[c] + fill[c]++] = (uint32_t)i;
-            }
-        }
-    }
+    IndexWallsByCell(g.rasterGrid, g.rasterWalls, g.rasterWallAt, g.rasterWallIdx);
 }
 
-// DOOM-0652 B2: draw the polar wall map of a light at (x, y) with range R into out, from
-// the lines in the cells its range's square covers.
-static void DrawRasterPolar(float x, float y, float R, float* out)
+// DOOM-0652: put in cand, once each, the walls listed in the cells that the square of
+// half-side R round (x, y) covers. stamp and tick dedupe across cells without clearing.
+static void GatherWalls(const lgrid::Grid& gr, const std::vector<uint32_t>& at,
+                        const std::vector<uint32_t>& idx, float x, float y, float R,
+                        std::vector<uint32_t>& stamp, uint32_t& tick, std::vector<uint32_t>& cand)
 {
-    const lgrid::Grid& gr = g.rasterGrid;
-    g.rasterCand.clear();
-    if (++g.rasterWallTick == 0)
+    cand.clear();
+    if (++tick == 0)
     {
-        std::fill(g.rasterWallStamp.begin(), g.rasterWallStamp.end(), 0u);
-        g.rasterWallTick = 1;
+        std::fill(stamp.begin(), stamp.end(), 0u);
+        tick = 1;
     }
-    if (gr.w > 0 && !g.rasterWallAt.empty())
+    if (gr.w > 0 && !at.empty())
     {
         auto cellOf = [&](float v, float o, int hi) {
             return std::min(std::max((int)std::floor((v - o) / gr.cell + 0.5f), 0), hi);
@@ -8579,15 +8588,23 @@ static void DrawRasterPolar(float x, float y, float R, float* out)
         for (int ix = x0; ix <= x1; ix++)
         {
             const size_t c = (size_t)iy * gr.w + ix;
-            for (uint32_t k = g.rasterWallAt[c]; k < g.rasterWallAt[c + 1]; k++)
+            for (uint32_t k = at[c]; k < at[c + 1]; k++)
             {
-                const uint32_t id = g.rasterWallIdx[k];
-                if (g.rasterWallStamp[id] == g.rasterWallTick) continue;
-                g.rasterWallStamp[id] = g.rasterWallTick;
-                g.rasterCand.push_back(id);
+                const uint32_t id = idx[k];
+                if (stamp[id] == tick) continue;
+                stamp[id] = tick;
+                cand.push_back(id);
             }
         }
     }
+}
+
+// DOOM-0652 B2: draw the polar wall map of a light at (x, y) with range R into out, from
+// the lines in the cells its range's square covers.
+static void DrawRasterPolar(float x, float y, float R, float* out)
+{
+    GatherWalls(g.rasterGrid, g.rasterWallAt, g.rasterWallIdx, x, y, R,
+                g.rasterWallStamp, g.rasterWallTick, g.rasterCand);
     lgrid::BuildPolarMap(x, y, R, g.rasterWalls.data(), g.rasterCand.data(),
                          (int)g.rasterCand.size(), out);
 }
@@ -9634,23 +9651,83 @@ void BuildProbes()
     // DOOM-0652 B3: the probes stand on a 3D lattice over the seep field's cells, not one
     // per subsector (spec 4.5). Each column takes the layers in or within one layer of its
     // sector's air (lgrid::ProbeLayerZ); the bake marks a point that turns out to be inside
-    // solid map invalid. Header, index and records: light_grid.h.
+    // solid map invalid. Header, index, records and B5's polar maps: light_grid.h.
     std::vector<float> rec;
     [&rec]() {
         const rb_seep_t* f = g.seepField;
         if (!f || f->w <= 0 || f->h <= 0 || !(f->cell > 0.0f))
             return;
-        std::vector<float> colF((size_t)f->w * f->h, 0.0f), colC((size_t)f->w * f->h, 0.0f);
+        const double t0 = CpuNowMs();
+        // B5: the map's lines, their openings, and which cells each crosses.
+        const int nl = std::max(RB_LightWalls(nullptr, 0), 0);
+        std::vector<lgrid::Wall2D> walls((size_t)nl);
+        std::vector<float> gapLo((size_t)nl), gapHi((size_t)nl);
+        if (nl > 0)
+        {
+            RB_LightWalls(reinterpret_cast<rb_lwall_t*>(walls.data()), nl);
+            RB_LightWallGaps(gapLo.data(), gapHi.data(), nl);
+        }
+        lgrid::Grid gr;
+        gr.ox = f->originX; gr.oy = f->originY; gr.cell = f->cell; gr.w = f->w; gr.h = f->h;
+        std::vector<uint32_t> wallAt, wallIdx;
+        IndexWallsByCell(gr, walls, wallAt, wallIdx);
+        std::vector<uint32_t> cand, stamp((size_t)nl, 0u);
+        uint32_t tick = 0;
+
+        const size_t cols = (size_t)f->w * f->h;
+        std::vector<float> colF(cols, 0.0f), colC(cols, 0.0f), colX(cols), colY(cols);
         float zmin = 1e30f, zmax = -1e30f;
+        int moved = 0;
         for (int iy = 0; iy < f->h; iy++)
             for (int ix = 0; ix < f->w; ix++)
             {
                 const size_t c = (size_t)iy * f->w + ix;
+                colX[c] = f->originX + ix * f->cell;
+                colY[c] = f->originY + iy * f->cell;
                 float fz = 0.0f, cz = 0.0f;
                 // DOOM-0652 B4: the seep field's void test drops a column inside a wall or
                 // out past the map before any probe is baked there. The bake's back-hit
                 // flag stays for what this misses.
-                if (!RB_SeepCellAir(f, ix, iy, &fz, &cz) || !(cz > fz))
+                bool air = RB_SeepCellAir(f, ix, iy, &fz, &cz) && cz > fz;
+                // B5: a centre in a wall moves to an air sample of a 4 x 4 grid in the
+                // cell, so a corridor narrower than a cell gets probes of its own. The
+                // sample nearest the centre wins among those RB_PROBE_MARGIN clear of every
+                // blocking line, then among the rest: a probe hugging a wall sees the backs
+                // of its faces and the bake marks it inside solid map. A cell no line
+                // crosses is all void when its centre is.
+                if (!air && wallAt[c + 1] > wallAt[c])
+                {
+                    GatherWalls(gr, wallAt, wallIdx, colX[c], colY[c], f->cell, stamp, tick, cand);
+                    const float x0 = colX[c], y0 = colY[c];
+                    float best = 1e30f;
+                    for (int sy = 0; sy < 4; sy++)
+                        for (int sx = 0; sx < 4; sx++)
+                        {
+                            const float ox = ((float)sx - 1.5f) * 0.25f * f->cell;
+                            const float oy = ((float)sy - 1.5f) * 0.25f * f->cell;
+                            const float qx = x0 + ox, qy = y0 + oy;
+                            float sf = 0.0f, sc = 0.0f;
+                            float key = ox * ox + oy * oy;
+                            if (key < best && RB_PointAir(qx, qy, &sf, &sc) && sc > sf)
+                                for (uint32_t id : cand)
+                                {
+                                    const lgrid::Wall2D& w = walls[id];
+                                    if (w.kind != lgrid::LW_OPEN
+                                        && RB_SeepPointSegDist(qx, qy, w.x1, w.y1, w.x2, w.y2)
+                                               < lgrid::RB_PROBE_MARGIN)
+                                    { key += 1e6f; break; }
+                                }
+                            if (key >= best || !(sc > sf))
+                                continue;
+                            best = key;
+                            fz = sf; cz = sc;
+                            colX[c] = qx;
+                            colY[c] = qy;
+                        }
+                    air = best < 1e30f;
+                    moved += air ? 1 : 0;
+                }
+                if (!air)
                     continue;
                 colF[c] = fz; colC[c] = cz;
                 zmin = std::min(zmin, fz); zmax = std::max(zmax, cz);
@@ -9675,13 +9752,44 @@ void BuildProbes()
                     rec[lgrid::PROBE_HDR + (size_t)iz * L.nx * L.ny + c] = (float)count++;
                     const size_t r = rec.size();
                     rec.resize(r + lgrid::PROBE_REC, 0.0f);   // SH and reach zeroed
-                    rec[r + 0] = L.ox + ix * L.cell;
-                    rec[r + 1] = L.oy + iy * L.cell;
+                    rec[r + 0] = colX[c];
+                    rec[r + 1] = colY[c];
                     rec[r + 2] = z;
                     rec[r + 3] = 1.0f;                         // valid until the bake says not
+                    rec[r + lgrid::PROBE_MAP] = -1.0f;         // open across until B5's map
                 }
         g.probeCount   = count;
         g.probeLattice = L;
+
+        // B5: each probe's polar wall map, drawn from its own position and height, after the
+        // records. A probe with no wall in range stores none.
+        const float R = lgrid::RB_PROBE_POLAR_REACH * L.cell;
+        const size_t rec0 = lgrid::ProbeRecBase(L);
+        std::vector<float>    maps, m(lgrid::RB_PROBE_POLAR_BINS);
+        for (uint32_t i = 0; i < count; i++)
+        {
+            float* r = &rec[rec0 + (size_t)i * lgrid::PROBE_REC];
+            GatherWalls(gr, wallAt, wallIdx, r[0], r[1], R, stamp, tick, cand);
+            if (!lgrid::BuildProbePolarMap(r[0], r[1], r[2], R, walls.data(), gapLo.data(),
+                                           gapHi.data(), cand.data(), (int)cand.size(), m.data()))
+                continue;
+            r[lgrid::PROBE_MAP] = (float)(rec.size() + maps.size());
+            maps.insert(maps.end(), m.begin(), m.end());
+        }
+        // A map start is a float index; past 2^24 floats it would round, so leave the maps
+        // out and every probe reads as open across (spec 5).
+        if (rec.size() + maps.size() >= lgrid::PROBE_FLOAT_LIMIT)
+        {
+            for (uint32_t i = 0; i < count; i++)
+                rec[rec0 + (size_t)i * lgrid::PROBE_REC + lgrid::PROBE_MAP] = -1.0f;
+            printf("RB_Vulkan: GI probes: %zu floats is past the map index limit; probe wall maps left out\n",
+                   rec.size() + maps.size());
+            maps.clear();
+        }
+        const size_t nMaps = maps.size() / lgrid::RB_PROBE_POLAR_BINS;
+        rec.insert(rec.end(), maps.begin(), maps.end());
+        printf("RB_Vulkan: GI probes: %u on the lattice, %d void columns moved into air, %zu wall maps (%.1f ms)\n",
+               count, moved, nMaps, CpuNowMs() - t0);
     }();
 
     // Both probe buffers get the positions (SH zeroed): the bake ping-pongs between

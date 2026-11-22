@@ -12,6 +12,9 @@
 //   INV-4  A wall blocks a lamp's light along the wall's own line (the polar wall map),
 //          and the cell cull built on the map never drops a light that reaches the cell.
 //   INV-6  A probe on the far side of a wall adds nothing to a point (the lattice blend).
+//   INV-9  The same for a wall at any angle (B5's per-probe polar map), and a pillar beside
+//          the sight line hides nothing.
+//   INV-10 A two-sided line blocks a probe whose height its opening does not hold.
 //
 // Build/run: `make test` (from linuxdoom-1.10/). No WAD, no GPU, no display.
 #include <cmath>
@@ -243,50 +246,134 @@ int main()
         check(culledSome, "and the cull does cull");
     }
 
-    // INV-6: a probe on the far side of a wall adds nothing to a point. A 2x2x2 lattice,
-    // 64 units apart, with a wall at x = 56: the x = 64 corners stand 8 units behind it
-    // and hold bright SH; the x = 0 corners hold dim SH of their own.
+    // INV-6 and INV-9: a probe with a wall between it and a point adds nothing to it. A
+    // 2x2x2 lattice 64 units apart; corners the `bright` test picks hold bright SH, the
+    // rest dim SH of their own. Each probe's polar map is drawn from `walls`, as BuildProbes
+    // draws it, so these exercise the same map the engine stores.
     {
         const ProbeLattice L = { 0.0f, 0.0f, 0.0f, 64.0f, 64.0f, 2, 2, 2 };
-        auto lattice = [&](bool farPresent, float farReachMinusX, float nearReachX = 56.0f) {
+        auto lattice = [&](const std::vector<Wall2D>& W, auto present, auto bright) {
             std::vector<float> buf(ProbeRecBase(L) + 8 * PROBE_REC, 0.0f);
             const float hdr[PROBE_HDR] = { L.ox, L.oy, L.oz, L.cell, L.dz, 2, 2, 2 };
             std::copy(hdr, hdr + PROBE_HDR, buf.begin());
+            std::vector<uint32_t> ids(W.size());
+            for (size_t i = 0; i < W.size(); i++) ids[i] = (uint32_t)i;
+            const std::vector<float> lo(W.size(), 0.0f), hi(W.size(), 1000.0f);
             for (int k = 0; k < 8; k++)
             {
                 const int ix = k & 1, iy = (k >> 1) & 1, iz = (k >> 2) & 1;
-                buf[PROBE_HDR + k] = (ix == 1 && !farPresent) ? -1.0f : (float)k;
-                float* r = &buf[ProbeRecBase(L) + (size_t)k * PROBE_REC];
-                r[0] = ix * 64.0f; r[1] = iy * 64.0f; r[2] = iz * 64.0f; r[3] = 1.0f;
-                for (int c = 0; c < 12; c++) r[4 + c] = ix ? 50.0f : 1.0f + 0.1f * (float)(k + c);
-                for (int a = 0; a < 6; a++) r[16 + a] = 1000.0f;
-                if (ix == 0) r[16] = nearReachX;            // +x: the wall
-                else         r[17] = farReachMinusX;         // -x: the wall, from behind
+                buf[PROBE_HDR + k] = present(ix, iy) ? (float)k : -1.0f;
+                const size_t r = ProbeRecBase(L) + (size_t)k * PROBE_REC;
+                buf[r + 0] = ix * 64.0f; buf[r + 1] = iy * 64.0f; buf[r + 2] = iz * 64.0f;
+                buf[r + 3] = 1.0f;
+                for (int c = 0; c < 12; c++)
+                    buf[r + 4 + c] = bright(ix, iy) ? 50.0f : 1.0f + 0.1f * (float)(k + c);
+                for (int a = 0; a < 6; a++) buf[r + 16 + a] = 1000.0f;
+                std::vector<float> m(RB_PROBE_POLAR_BINS);
+                buf[r + PROBE_MAP] = -1.0f;
+                if (BuildProbePolarMap(buf[r], buf[r + 1], buf[r + 2], RB_PROBE_POLAR_REACH * L.cell,
+                                       W.data(), lo.data(), hi.data(), ids.data(), (int)W.size(), m.data()))
+                {
+                    buf[r + PROBE_MAP] = (float)buf.size();
+                    buf.insert(buf.end(), m.begin(), m.end());
+                }
             }
             return buf;
         };
+        auto all   = [](int, int) { return true; };
+        auto nearX = [](int ix, int) { return ix == 0; };
+        auto farX  = [](int ix, int) { return ix == 1; };
+        auto same  = [](const float* a, const float* b) {
+            bool s = true;
+            for (int c = 0; c < 12; c++) s = s && std::fabs(a[c] - b[c]) < 1e-5f;
+            return s;
+        };
         const float px = 40.0f, py = 20.0f, pz = 30.0f;
+        const std::vector<Wall2D> none;
+        // A shut line at x = 56 stands 8 units before the x = 64 corners.
+        const std::vector<Wall2D> wallX = { { 56.0f, -200.0f, 56.0f, 300.0f, LW_CLOSED } };
         float shWall[12], shNear[12], shOpen[12];
-        const bool any1 = ProbeBlendSH(lattice(true, 8.0f).data(),     px, py, pz, shWall);
-        const bool any2 = ProbeBlendSH(lattice(false, 8.0f).data(),    px, py, pz, shNear);
-        ProbeBlendSH(lattice(true, 1000.0f).data(), px, py, pz, shOpen);
-        bool same = any1 && any2, differs = false;
-        for (int c = 0; c < 12; c++)
-        {
-            same    = same && std::fabs(shWall[c] - shNear[c]) < 1e-5f;
-            differs = differs || std::fabs(shOpen[c] - shNear[c]) > 1.0f;
-        }
-        check(same,    "INV-6: the blend beside a wall equals the near corners' blend alone");
-        check(differs, "INV-6: and with no wall the far corners do change it");
+        const bool any1 = ProbeBlendSH(lattice(wallX, all, farX).data(), px, py, pz, shWall);
+        const bool any2 = ProbeBlendSH(lattice(none, nearX, farX).data(), px, py, pz, shNear);
+        ProbeBlendSH(lattice(none, all, farX).data(), px, py, pz, shOpen);
+        check(any1 && any2 && same(shWall, shNear),
+              "INV-6: the blend beside a wall equals the near corners' blend alone");
+        check(!same(shOpen, shNear), "INV-6: and with no wall the far corners do change it");
 
-        // Every corner short of the point (near walls at x = 20 and x = 56): blend them
-        // unmasked rather than go black.
+        // Every corner blocked (a second shut line at x = 20): blend them unmasked rather
+        // than go black.
+        std::vector<Wall2D> both = wallX;
+        both.push_back({ 20.0f, -200.0f, 20.0f, 300.0f, LW_CLOSED });
         float shShort[12];
-        const bool any3 = ProbeBlendSH(lattice(true, 8.0f, 20.0f).data(), px, py, pz, shShort);
-        check(any3 && shShort[0] > 0.0f, "INV-6: a point every corner falls short of is not black");
+        const bool any3 = ProbeBlendSH(lattice(both, all, farX).data(), px, py, pz, shShort);
+        check(any3 && shShort[0] > 0.0f, "INV-6: a point every corner is blocked from is not black");
         float shNone[12];
-        check(!ProbeBlendSH(lattice(true, 8.0f).data(), -500.0f, py, pz, shNone) && shNone[0] == 0.0f,
+        check(!ProbeBlendSH(lattice(none, all, farX).data(), -500.0f, py, pz, shNone) && shNone[0] == 0.0f,
               "INV-6: a point with no corner present reads zero");
+
+        // INV-9: a shut line along x + y = 120 hides the (64, 64) corners from the point,
+        // though their axis reach to it is clear. A corner short of a 45-degree wall is the
+        // case B3's six reach rays missed.
+        auto diagBright = [](int ix, int iy) { return ix == 1 && iy == 1; };
+        auto diagGone   = [](int ix, int iy) { return !(ix == 1 && iy == 1); };
+        const std::vector<Wall2D> diag = { { 200.0f, -80.0f, -80.0f, 200.0f, LW_CLOSED } };
+        float shDiag[12], shDiagNear[12], shDiagOpen[12];
+        ProbeBlendSH(lattice(diag, all, diagBright).data(), px, py, pz, shDiag);
+        ProbeBlendSH(lattice(none, diagGone, diagBright).data(), px, py, pz, shDiagNear);
+        ProbeBlendSH(lattice(none, all, diagBright).data(), px, py, pz, shDiagOpen);
+        check(same(shDiag, shDiagNear), "INV-9: a 45-degree wall hides the corner behind it");
+        check(!same(shDiagOpen, shDiagNear), "INV-9: and with no wall that corner does change it");
+
+        // INV-9: a small shut pillar 5 units beside the (64, 64) corner's sight line to the
+        // point does not hide it (the diagonal reach rays tried at B4 did).
+        const std::vector<Wall2D> pillar = {
+            { 56.0f, 36.0f, 62.0f, 36.0f, LW_CLOSED }, { 62.0f, 36.0f, 62.0f, 42.0f, LW_CLOSED },
+            { 62.0f, 42.0f, 56.0f, 42.0f, LW_CLOSED }, { 56.0f, 42.0f, 56.0f, 36.0f, LW_CLOSED } };
+        float shPillar[12];
+        ProbeBlendSH(lattice(pillar, all, diagBright).data(), px, py, pz, shPillar);
+        check(same(shPillar, shDiagOpen), "INV-9: a pillar beside the sight line hides nothing");
+    }
+
+    // INV-9: a long straight wall split into short linedefs hides nothing in front of it. A
+    // probe 20 units off a wall at y = 20 cut every 24 units sees every point 8 units in
+    // front of the wall, out to the 2.5 cells (64 units each) a probe answers for: a joint
+    // inside a bin must not stand in for the wall.
+    {
+        std::vector<Wall2D> W;
+        for (float x = 200.0f; x > -200.0f; x -= 24.0f)
+            W.push_back({ x - 24.0f, 20.0f, x, 20.0f, LW_ONESIDED });   // facing the probe
+        std::vector<uint32_t> ids(W.size());
+        for (size_t i = 0; i < W.size(); i++) ids[i] = (uint32_t)i;
+        const std::vector<float> lo(W.size(), 0.0f), hi(W.size(), 0.0f);
+        float m[RB_PROBE_POLAR_BINS];
+        BuildProbePolarMap(0, 0, 0, RB_PROBE_POLAR_REACH * 64.0f, W.data(), lo.data(), hi.data(),
+                           ids.data(), (int)ids.size(), m);
+        bool seen = true;
+        for (float x = -160.0f; x <= 160.0f; x += 1.0f)
+            if (x * x + 144.0f <= 160.0f * 160.0f)
+                seen = seen && ProbeSeesAcross(m, x, 12.0f);
+        check(seen, "INV-9: a wall cut into short lines hides no point in front of it");
+        check(!ProbeSeesAcross(m, 0.0f, 40.0f), "INV-9: and still hides the point behind it");
+        // A relief recess (Ultra's sunk wall panels, up to 12 units deep) puts a lit point
+        // behind the line. Seen at a slant its distance past the wall along the ray is many
+        // times its depth; it must still be seen.
+        check(ProbeSeesAcross(m, 60.0f, 30.0f), "INV-9: a point 10 units into a recess is seen at a slant");
+        check(!ProbeSeesAcross(m, 60.0f, 44.0f), "INV-9: one 24 units behind the wall is not");
+    }
+
+    // INV-10: a two-sided line blocks a probe whose height its opening does not hold. A
+    // ledge line at x = 50, open from z 64 to 200: a probe at z 32 sees nothing past it,
+    // one at z 100 sees past it.
+    {
+        const std::vector<Wall2D> ledge = { { 50.0f, -200.0f, 50.0f, 200.0f, LW_OPEN } };
+        const float lo[1] = { 64.0f }, hi[1] = { 200.0f };
+        const uint32_t id[1] = { 0 };
+        float below[RB_PROBE_POLAR_BINS], within[RB_PROBE_POLAR_BINS];
+        const bool b1 = BuildProbePolarMap(0, 0, 32.0f, 192.0f, ledge.data(), lo, hi, id, 1, below);
+        const bool b2 = BuildProbePolarMap(0, 0, 100.0f, 192.0f, ledge.data(), lo, hi, id, 1, within);
+        check(b1 && !ProbeSeesAcross(below, 80.0f, 0.0f), "INV-10: a probe below a ledge does not see its top");
+        check(ProbeSeesAcross(below, 30.0f, 0.0f), "INV-10: it still sees the floor before the ledge");
+        check(!b2 && ProbeSeesAcross(within, 80.0f, 0.0f), "INV-10: a probe within the opening sees past it");
     }
 
     // Spec 4.5: placement. A layer inside a column's air stays; one less than a layer

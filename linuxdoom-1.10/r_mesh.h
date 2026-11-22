@@ -297,6 +297,9 @@ void       RB_FreeSeepField(rb_seep_t* field);
 // untouched) when the cell holds no air at all -- a wall, the void ring, or a shut door.
 // The fog-light bake uses it to place its sight-test sample inside real air.
 int RB_SeepCellAir(const rb_seep_t* field, int ix, int iy, float* fz, float* cz);
+// DOOM-0652 B5: the same question for one world point: 1 with its sector's floor and
+// ceiling when (x, y) is in a room's air, 0 inside a wall, past the map or in a shut door.
+int RB_PointAir(float x, float y, float* fz, float* cz);
 
 // DOOM-0289. Re-run ONLY the sun-clearance march over an existing field: refresh the
 // retained geometry cache from the live sector heights, then re-derive zLo/zHi. Skips the

@@ -17,6 +17,11 @@ typedef struct { float x1, y1, x2, y2; unsigned kind; } rb_lwall_t;
 // than numlines.
 int RB_LightWalls(rb_lwall_t* out, int max);
 
+// DOOM-0652 B5: fill lo[i] and hi[i] with linedef i's opening, the higher floor and the
+// lower ceiling of its two sides, for i < numlines. A one-sided line gets lo = hi = 0. Same
+// return as RB_LightWalls.
+int RB_LightWallGaps(float* lo, float* hi, int max);
+
 #ifdef __cplusplus
 }
 #endif
