@@ -1,7 +1,7 @@
 <!-- ants-spec-format: 1 -->
 # DOOM-0652 — Light that fades smoothly: a shared light grid, wall-true lamp shadows and blended bounce light
 
-**Status:** accepted (2026-11-21). B1, B2 and B3 built; B4 is next.
+**Status:** accepted (2026-11-21). B1 to B4 built; B4 awaits the peer code reviews.
 **Kind:** fix.
 **Source:** ROADMAP DOOM-0652 (user report 2026-11-21, light lab on E1M1).
 **Also closes:** DOOM-0649 (dim lights crowd bright ones out of a subsector's 16 slots): the
@@ -155,13 +155,15 @@ Probes sit on a 3D lattice:
   ceiling, so a room lower than the spacing still has probes (`lgrid::ProbeLayerZ`).
   Other layers are not baked.
 
-The sector lookup cannot tell a point in solid map from one in the air beside it. So the
-bake marks a probe invalid when more than `BAKE_BACK_MAX` of its rays land on the back of a
-surface, and readers drop it like an unbaked one.
+A column whose seep cell has no air (`RB_SeepCellAir`: inside a wall, past the map, or a
+shut door) gets no probes. As a backstop, the bake marks a probe invalid once more than
+`BAKE_BACK_MAX` of its rays land on the back of a surface, and stops tracing it. Readers
+drop it like an unbaked one.
 
-`bake.comp` is unchanged but for its positions. Every probe seeds by ray index only, so
-neighbouring probes share their noise. Each probe also stores its reach: the distance to the
-first surface along ±x, ±y and ±z.
+Every probe seeds by ray index only, so neighbouring probes share their noise. Each probe
+also stores its reach: the distance to the first surface along ±x, ±y and ±z. Bounce passes
+cast the same rays to the same hits, so they trace no shadow rays: they add the first
+pass's direct light back and copy its reach and valid flag.
 
 `giIrradianceAt(pos, n)` blends the 8 lattice corners around `pos + n * RB_PROBE_NBIAS`
 trilinearly. A corner is dropped when it is not baked, or when its reach toward the point
@@ -177,14 +179,16 @@ answer is zero. `lgrid::ProbeBlendSH` is the C copy the tests read.
 
 - Light grid: two words per cell (first entry, count) and the lists end to end, for the
   static lights and again for the moving ones, plus a light table of position, colour,
-  range, reach and sector. No list is longer than `RASTER_CELL_LIGHTS`. Host-visible, one
-  copy per frame in flight in `g.lightBufSlot`, grown to fit. It replaces the per-subsector
+  range, reach and sector. No list is longer than `RASTER_CELL_LIGHTS`. Host-visible, in the
+  card's own memory where it can be (the CPU only writes it), one copy per frame in flight in
+  `g.lightBufSlot`, grown to fit. It replaces the per-subsector
   `lightBuf`.
 - Polar maps: lights × `RASTER_POLAR_BINS` floats, in the light buffer after each light table.
 - Probes: a header, one index float per lattice point, and a 24-float record (position,
   valid flag, SH, reach) per baked probe; `light_grid.h` gives the layout. The index is
-  bounded by the seep field's `RB_SEEP_MAXDIM` squared, times `RB_PROBE_MAXLAYERS`. B4
-  measures the largest IWAD map's bake time before the caps are fixed.
+  bounded by the seep field's `RB_SEEP_MAXDIM` squared, times `RB_PROBE_MAXLAYERS`. In the
+  card's own memory where it can be; the bake's CPU check reads a copy in cached system
+  memory, since an uncached read of the card's memory runs at bus speed.
 - Push constants: `pc.triSs` stays for the traced view and specular. The light and probe
   addresses change meaning; the 128-byte block keeps its size.
 
@@ -194,8 +198,9 @@ answer is zero. `lgrid::ProbeBlendSH` is the C copy the tests read.
   a light-heavy room, as DOOM-0170 INV-2 requires.
 - Per-frame CPU for the light grid's dynamic part stays under the 1 ms that
   `BuildRasterPointLights` was held to.
-- The load-time bake (probes and static polar maps) fits under the load screen. B4 records it
-  for the largest IWAD map. A door settling must not cost a frame over DOOM-0170 INV-3's
+- The load-time bake (probes and static polar maps) fits under the load screen. Measured
+  2026-11-22 on the RX 6600, Solid, real display: MAP24's probe bake takes 32.5 ms. A run
+  under Xvfb times the bake many times slower, so quote bake times from a real display. A door settling must not cost a frame over DOOM-0170 INV-3's
   1.5× budget.
 
 ## 7. Build order

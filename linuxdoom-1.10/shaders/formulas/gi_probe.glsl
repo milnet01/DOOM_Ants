@@ -59,13 +59,17 @@ vec3 giIrradianceAt(ProbesRO pr, vec3 pos, vec3 n)
     vec3  f    = c - bf;
     ivec3 bi   = ivec3(bf);
 
-    vec4 sR = vec4(0.0), sG = vec4(0.0), sB = vec4(0.0);
-    vec4 aR = vec4(0.0), aG = vec4(0.0), aB = vec4(0.0);
-    float wS = 0.0, wA = 0.0;
+    // DOOM-0652 B4: two passes, so a corner's 12 SH floats are fetched only when the
+    // blend uses it. The first reads each corner's position and reach; the second blends
+    // the corners that reach, or every present one when none does.
+    uint  rb[8];
+    float rw[8];
+    uint  present = 0u, reaching = 0u;
     for (int k = 0; k < 8; k++)
     {
         ivec3 off = ivec3(k & 1, (k >> 1) & 1, (k >> 2) & 1);
         ivec3 q   = bi + off;
+        rb[k] = 0u; rw[k] = 0.0;
         if (any(lessThan(q, ivec3(0))) || any(greaterThanEqual(q, dim)))
             continue;
         float idx = pr.p[GI_PROBE_HDR + uint((q.z * dim.y + q.y) * dim.x + q.x)];
@@ -75,21 +79,37 @@ vec3 giIrradianceAt(ProbesRO pr, vec3 pos, vec3 n)
         if (pr.p[b + 3u] == 0.0)
             continue;
         vec3  share = mix(1.0 - f, f, vec3(off));
-        float w     = share.x * share.y * share.z;
+        rb[k] = b;
+        rw[k] = share.x * share.y * share.z;
+        present |= 1u << k;
         vec3  d     = x - vec3(pr.p[b], pr.p[b + 1u], pr.p[b + 2u]);
         vec3  reach = vec3(d.x >= 0.0 ? pr.p[b + 16u] : pr.p[b + 17u],
                            d.y >= 0.0 ? pr.p[b + 18u] : pr.p[b + 19u],
                            d.z >= 0.0 ? pr.p[b + 20u] : pr.p[b + 21u]);
-        vec4 r = vec4(pr.p[b +  4u], pr.p[b +  5u], pr.p[b +  6u], pr.p[b +  7u]);
-        vec4 g = vec4(pr.p[b +  8u], pr.p[b +  9u], pr.p[b + 10u], pr.p[b + 11u]);
-        vec4 bl= vec4(pr.p[b + 12u], pr.p[b + 13u], pr.p[b + 14u], pr.p[b + 15u]);
-        aR += w * r; aG += w * g; aB += w * bl; wA += w;
-        if (any(greaterThan(abs(d), reach + GI_PROBE_SLACK)))
+        if (!any(greaterThan(abs(d), reach + GI_PROBE_SLACK)))
+            reaching |= 1u << k;
+    }
+    float wR = 0.0;
+    for (int k = 0; k < 8; k++)
+        if ((reaching & (1u << k)) != 0u) wR += rw[k];
+    // Every present corner falling short blends them all; a reaching set whose weights
+    // sum to zero does too, as the single-pass form did.
+    const uint use = (wR > 0.0) ? reaching : present;
+
+    vec4 sR = vec4(0.0), sG = vec4(0.0), sB = vec4(0.0);
+    float wS = 0.0;
+    for (int k = 0; k < 8; k++)
+    {
+        if ((use & (1u << k)) == 0u)
             continue;
-        sR += w * r; sG += w * g; sB += w * bl; wS += w;
+        uint  b = rb[k];
+        float w = rw[k];
+        sR += w * vec4(pr.p[b +  4u], pr.p[b +  5u], pr.p[b +  6u], pr.p[b +  7u]);
+        sG += w * vec4(pr.p[b +  8u], pr.p[b +  9u], pr.p[b + 10u], pr.p[b + 11u]);
+        sB += w * vec4(pr.p[b + 12u], pr.p[b + 13u], pr.p[b + 14u], pr.p[b + 15u]);
+        wS += w;
     }
     if (wS > 0.0) return giEvalSH(sR / wS, sG / wS, sB / wS, n);
-    if (wA > 0.0) return giEvalSH(aR / wA, aG / wA, aB / wA, n);
     return vec3(0.0);
 }
 

@@ -1146,16 +1146,6 @@ int RB_SectorAtPoint(float x, float y)
     return (int)(ss->sector - sectors);
 }
 
-int RB_SectorPlanesAtPoint(float x, float y, float* floorz, float* ceilz)
-{
-    const int s = RB_SectorAtPoint(x, y);
-    if (s < 0)
-        return -1;
-    *floorz = sectors[s].floorheight   / (float)FRACUNIT;
-    *ceilz  = sectors[s].ceilingheight / (float)FRACUNIT;
-    return s;
-}
-
 // ---------------------------------------------------------------------------
 // DOOM-0011 L1d: the outdoor-proximity seep field (spec §4.3a amendment).
 //

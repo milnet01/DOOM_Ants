@@ -45,7 +45,8 @@ layout(push_constant) uniform PC {
     MatEmis  matEmis;  // per-material Le table
     Probes   probes;   // GI probe buffer (this pass's output)
     ProbesRO prevProbes; // previous bounce pass's probes (read for multi-bounce)
-    TriSs    triSs;     // unused since DOOM-0652 B3 (bounces read the lattice by position)
+    Probes   direct;    // DOOM-0652 B4: 12 SH floats per probe, the first pass's direct
+                        // light; passes 2+ add it back instead of re-tracing it
     EmitSec  emitSec;  // DOOM-0119: unused here (always 0) — the bake's omni loop is
     Reject   reject;   // empty (omniStart == emitCount), so shadeSurface's REJECT cull
                        // is dead; passed only to satisfy the shared signature.
@@ -86,6 +87,19 @@ void main()
     const uint base = GI_PROBE_HDR + dims + pi * GI_PROBE_REC;
     const vec3 P = vec3(pc.probes.p[base + 0u], pc.probes.p[base + 1u], pc.probes.p[base + 2u]);
 
+    // DOOM-0652 B4: passes 2+ cast the same rays to the same hits, so their direct light
+    // is the first pass's. They take it from pc.direct and trace only the bounce. Reach and
+    // the valid flag do not change either, so they are copied from the previous pass.
+    const bool bounce = pc.misc.w != 0u;
+    if (bounce)
+    {
+        for (uint k = 16u; k < 22u; k++)
+            pc.probes.p[base + k] = pc.prevProbes.p[base + k];
+        pc.probes.p[base + 3u] = pc.prevProbes.p[base + 3u];
+        if (pc.prevProbes.p[base + 3u] == 0.0)
+            return;                              // inside solid map: readers skip it
+    }
+
     // SH-L1 radiance accumulators per colour channel (4 coeffs each: l=0 + 3*l=1).
     vec4 shR = vec4(0.0), shG = vec4(0.0), shB = vec4(0.0);
     uint backHits = 0u;
@@ -124,6 +138,13 @@ void main()
             const uint i0   = uint(prim) * 3u * 18u;
             vec3 n = normalize(vec3(pc.verts.v[i0 + 3u], pc.verts.v[i0 + 4u], pc.verts.v[i0 + 5u]));
             if (dot(n, wi) > 0.0) { n = -n; backHits++; }   // the mesh's normals face the air
+            // DOOM-0652 B4: past the cap the probe is invalid whatever the other rays see,
+            // so stop paying for them. Readers skip an invalid probe, so its SH can stay.
+            if (!bounce && float(backHits) > BAKE_BACK_MAX * float(BAKE_RAYS))
+            {
+                pc.probes.p[base + 3u] = 0.0;
+                return;
+            }
             int   texnum = floatBitsToInt(pc.verts.v[i0 + 8u]);
             int   flags  = floatBitsToInt(pc.verts.v[i0 + 9u]);
             uint  id     = ((flags & FLAG_FLAT) != 0) ? (pc.misc.y + uint(texnum))
@@ -151,22 +172,24 @@ void main()
             // never culls; its omni loop is empty anyway).
             // DOOM-0103 INV-2: a zero view direction and setting 0, so the probes hold
             // no highlight; noSpec stays zero.
+            // Multi-bounce: passes 2+ (giEnabled) take the light this surface received
+            // from the PREVIOUS bounce's probes; pass 1's direct light is added after the
+            // loop. Pass 1 builds 1-bounce indirect; pass 2 = 2 bounces, pass 3 = 3, etc.
             vec3 noSpec;
-            Li = shadeSurface(hitP, n, albedo, id, pc.misc.z, pc.misc.z,
-                              pc.emit, pc.matEmis, BAKE_NEE, false,
-                              1.0,   // unused: addEmission is false for the bake
-                              0xFFFFFFFFu, 0u, pc.emitSec, pc.reject,
-                              vec3(0.0), 1.0, vec3(kSpecF0), 0u, 0u, noSpec, seed);
-
-            // Multi-bounce: on passes 2+ (giEnabled), add the light this surface
-            // received from the PREVIOUS bounce's probes. Pass 1 builds 1-bounce
-            // indirect; feeding it back makes pass 2 = 2 bounces, pass 3 = 3, etc.
-            if (pc.misc.w != 0u)
-                Li += albedo * giIrradianceAt(pc.prevProbes, hitP, n);
+            if (bounce)
+                Li = albedo * giIrradianceAt(pc.prevProbes, hitP, n);
+            else
+                Li = shadeSurface(hitP, n, albedo, id, pc.misc.z, pc.misc.z,
+                                  pc.emit, pc.matEmis, BAKE_NEE, false,
+                                  1.0,   // unused: addEmission is false for the bake
+                                  0xFFFFFFFFu, 0u, pc.emitSec, pc.reject,
+                                  vec3(0.0), 1.0, vec3(kSpecF0), 0u, 0u, noSpec, seed);
         }
         else
         {
-            Li = SKY_COLOR;     // ray escaped through the sky: bounded sky-light fill
+            // Ray escaped through the sky: bounded sky-light fill. It is direct light, so
+            // a bounce pass gets it back from pc.direct.
+            Li = bounce ? vec3(0.0) : SKY_COLOR;
         }
 
         // The same non-finite guard pathtrace.comp applies to shadeSurface's result
@@ -188,6 +211,20 @@ void main()
     float norm = (4.0 * PI) / float(BAKE_RAYS);
     shR *= norm; shG *= norm; shB *= norm;
 
+    const uint dbase = pi * 12u;
+    if (bounce)
+    {
+        shR += vec4(pc.direct.p[dbase + 0u], pc.direct.p[dbase + 1u], pc.direct.p[dbase + 2u],  pc.direct.p[dbase + 3u]);
+        shG += vec4(pc.direct.p[dbase + 4u], pc.direct.p[dbase + 5u], pc.direct.p[dbase + 6u],  pc.direct.p[dbase + 7u]);
+        shB += vec4(pc.direct.p[dbase + 8u], pc.direct.p[dbase + 9u], pc.direct.p[dbase + 10u], pc.direct.p[dbase + 11u]);
+    }
+    else
+    {
+        pc.direct.p[dbase + 0u] = shR.x; pc.direct.p[dbase + 1u] = shR.y; pc.direct.p[dbase + 2u]  = shR.z; pc.direct.p[dbase + 3u]  = shR.w;
+        pc.direct.p[dbase + 4u] = shG.x; pc.direct.p[dbase + 5u] = shG.y; pc.direct.p[dbase + 6u]  = shG.z; pc.direct.p[dbase + 7u]  = shG.w;
+        pc.direct.p[dbase + 8u] = shB.x; pc.direct.p[dbase + 9u] = shB.y; pc.direct.p[dbase + 10u] = shB.z; pc.direct.p[dbase + 11u] = shB.w;
+    }
+
     pc.probes.p[base + 4u]  = shR.x; pc.probes.p[base + 5u]  = shR.y;
     pc.probes.p[base + 6u]  = shR.z; pc.probes.p[base + 7u]  = shR.w;
     pc.probes.p[base + 8u]  = shG.x; pc.probes.p[base + 9u]  = shG.y;
@@ -195,8 +232,10 @@ void main()
     pc.probes.p[base + 12u] = shB.x; pc.probes.p[base + 13u] = shB.y;
     pc.probes.p[base + 14u] = shB.z; pc.probes.p[base + 15u] = shB.w;
 
+    if (bounce)
+        return;                                  // reach and valid were copied above
+
     // DOOM-0652 B3: the reach giIrradianceAt tests a point against, and the valid flag.
-    // Every pass writes both into its own buffer, and the same seeds give the same answer.
     pc.probes.p[base + 16u] = bakeReach(P, vec3( 1, 0, 0));
     pc.probes.p[base + 17u] = bakeReach(P, vec3(-1, 0, 0));
     pc.probes.p[base + 18u] = bakeReach(P, vec3( 0, 1, 0));

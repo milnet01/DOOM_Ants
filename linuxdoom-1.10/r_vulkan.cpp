@@ -2258,13 +2258,16 @@ static void CreateImage(VkExtent3D ext, VkFormat fmt, VkImageUsageFlags usage,
 // emitter list) by GPU address via buffer_reference, the same way it reads the
 // vertex buffer. Host-visible + coherent so the one-shot upload is a plain memcpy
 // (these are small and written once per level/session — no staging needed).
+// `preferred` is CreateRtBuffer's: pass DEVICE_LOCAL for a buffer shaders read every frame.
 void UploadAddressBuffer(const void* data, VkDeviceSize bytes,
-                         VkBuffer* buf, VkDeviceMemory* mem)
+                         VkBuffer* buf, VkDeviceMemory* mem,
+                         VkMemoryPropertyFlags preferred = 0)
 {
     CreateRtBuffer(bytes,
-                   VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+                   VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
+                   | VK_BUFFER_USAGE_TRANSFER_SRC_BIT,   // RunGiBake copies the probes out
                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-                   buf, mem);
+                   buf, mem, "addr", preferred);
     void* mapped = nullptr;
     Check(vkMapMemory(g.device, *mem, 0, bytes, 0, &mapped), "vkMapMemory(addrBuf)");
     std::memcpy(mapped, data, (size_t)bytes);
@@ -3099,7 +3102,7 @@ void CreateBakePipeline()
     CreateComputeSets(&tlasBind, 1, "bake", &g.bakeDsLayout, &g.bakeDsPool, { &g.bakeDs });
 
     // Push constant: uvec4 (probeCount/numWall/emitterCount/giEnabled) + 8 uint64
-    // buffer addresses (verts, emit, matEmis, probes, prevProbes, triSs, + DOOM-0119
+    // buffer addresses (verts, emit, matEmis, probes, prevProbes, direct, + DOOM-0119
     // emitSec/reject — always 0 here, but the shared shadeSurface references them so
     // the range must cover them) = 80 bytes. MUST match sizeof(BakePush) below.
     VkDescriptorSetLayout setLayouts[2] = { g.bakeDsLayout, g.dsLayout };
@@ -8781,7 +8784,8 @@ static void EnsureLightSlot(VkDeviceSize bytes)
     CreateRtBuffer(want,
         VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-        &g.lightBufSlot[s], &g.lightMemSlot[s]);
+        &g.lightBufSlot[s], &g.lightMemSlot[s], "light",
+        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);   // read per pixel; the CPU only writes it
     Check(vkMapMemory(g.device, g.lightMemSlot[s], 0, VK_WHOLE_SIZE, 0, &g.lightMappedSlot[s]),
           "vkMapMemory(light)");
     std::memset(g.lightMappedSlot[s], 0, RASTER_GRID_HEADER * sizeof(uint32_t));
@@ -9172,7 +9176,7 @@ void RunGiBake()
         uint64_t matEmisAddr;
         uint64_t probeAddr;     // write target (this pass's output)
         uint64_t prevProbeAddr; // read source (previous bounce's probes)
-        uint64_t triSsAddr;
+        uint64_t directAddr;    // DOOM-0652 B4: pass 1's direct-light SH, 12 floats a probe
         uint64_t emitSecAddr;   // DOOM-0119: always 0 (the bake's REJECT cull is dead);
         uint64_t rejectAddr;    // present only to match the shared shadeSurface signature.
     } bp = {};
@@ -9183,7 +9187,16 @@ void RunGiBake()
     bp.vertsAddr   = BufferAddress(g.vbuf);
     bp.emitAddr    = g.emitBuf ? BufferAddress(g.emitBuf) : 0;
     bp.matEmisAddr = BufferAddress(g.matEmisBuf);
-    bp.triSsAddr   = BufferAddress(g.triSsBuf);
+    // DOOM-0652 B4: pass 1 writes its direct light here and passes 2+ add it back, so
+    // only pass 1 traces shadow rays. Lives for this bake only.
+    VkBuffer       directBuf = VK_NULL_HANDLE;
+    VkDeviceMemory directMem = VK_NULL_HANDLE;
+    {
+        const std::vector<float> zeros((size_t)g.probeCount * 12u, 0.0f);
+        UploadAddressBuffer(zeros.data(), (VkDeviceSize)zeros.size() * sizeof(float),
+                            &directBuf, &directMem);
+    }
+    bp.directAddr  = BufferAddress(directBuf);
 
     // Multi-bounce GI (user request): pass 1 bakes 1-bounce indirect; each further
     // pass feeds the previous pass's probes back in (giEnabled) for one more bounce.
@@ -9192,11 +9205,25 @@ void RunGiBake()
     // count that means starting the write on probeBuf. Per-frame cost is unchanged
     // (still one probe lookup); only this one-time bake does the extra passes.
     const int      BOUNCES = 3;
+    static_assert(BOUNCES == 3, "the bake-done line prints three pass times");
     VkBuffer       wbuf = (BOUNCES & 1) ? g.probeBuf : g.probeBuf2;
     VkBuffer       rbuf = (BOUNCES & 1) ? g.probeBuf2 : g.probeBuf;
     VkDescriptorSet sets[2] = { g.bakeDs, g.ds };
+    double passMs[BOUNCES] = {};
+    // DOOM-0652 B4: the probes live in the card's memory, and a CPU read from there runs
+    // at bus speed uncached (2.4 s for MAP24's check). The last pass copies them into
+    // cached system memory, and the check below reads that copy.
+    const VkDeviceSize probeBytes =
+        (VkDeviceSize)(lgrid::ProbeRecBase(g.probeLattice)
+                       + (size_t)g.probeCount * lgrid::PROBE_REC) * sizeof(float);
+    VkBuffer       readBuf = VK_NULL_HANDLE;
+    VkDeviceMemory readMem = VK_NULL_HANDLE;
+    CreateRtBuffer(probeBytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                   VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                   &readBuf, &readMem, "probeRead", VK_MEMORY_PROPERTY_HOST_CACHED_BIT);
     for (int b = 0; b < BOUNCES; b++)
     {
+        const double passT0 = CpuNowMs();
         bp.misc[3]        = (b > 0) ? 1u : 0u;          // giEnabled on bounces 2+
         bp.probeAddr      = BufferAddress(wbuf);
         bp.prevProbeAddr  = BufferAddress(rbuf);
@@ -9207,17 +9234,30 @@ void RunGiBake()
                                 g.bakePipeLayout, 0, 2, sets, 0, nullptr);
         vkCmdPushConstants(cb, g.bakePipeLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(bp), &bp);
         vkCmdDispatch(cb, (g.probeCount + 63) / 64, 1, 1);
-        if (b == BOUNCES - 1)   // the CPU reads the final bounce back below
-            RecordHostReadBarrier(cb, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT);
+        if (b == BOUNCES - 1)   // the CPU reads the final bounce back below, from a copy
+        {
+            VkMemoryBarrier mb = {};
+            mb.sType         = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+            mb.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+            mb.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+            vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                                 VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 1, &mb, 0, nullptr, 0, nullptr);
+            VkBufferCopy cpy = { 0, 0, probeBytes };
+            vkCmdCopyBuffer(cb, wbuf, readBuf, 1, &cpy);
+            RecordHostReadBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
+        }
         EndOneTime(cb);   // waits idle: this bounce is done before the next reads it
+        passMs[b] = CpuNowMs() - passT0;
         std::swap(wbuf, rbuf);
     }
+    vkDestroyBuffer(g.device, directBuf, nullptr);
+    vkFreeMemory(g.device, directMem, nullptr);
     // After an odd bounce count the final pass wrote g.probeBuf — readback below.
 
     // Verify: scan the final SH payload (floats 4..15 of each record) for
     // finiteness and non-zero energy, and report the mean DC (l=0) irradiance.
     void* mapped = nullptr;
-    Check(vkMapMemory(g.device, g.probeMem, 0, VK_WHOLE_SIZE, 0, &mapped), "vkMapMemory(probeReadback)");
+    Check(vkMapMemory(g.device, readMem, 0, VK_WHOLE_SIZE, 0, &mapped), "vkMapMemory(probeReadback)");
     const float* pf = (const float*)mapped;
     int   nonFinite = 0, nonZero = 0, invalid = 0;
     double dcSum[3] = { 0, 0, 0 };
@@ -9270,11 +9310,15 @@ void RunGiBake()
             }
         }
     }
-    vkUnmapMemory(g.device, g.probeMem);
+    vkUnmapMemory(g.device, readMem);
+    vkDestroyBuffer(g.device, readBuf, nullptr);
+    vkFreeMemory(g.device, readMem, nullptr);
     const double nValid = std::max((int)g.probeCount - invalid, 1);
-    printf("RB_Vulkan: GI bake done (3 bounces, %.1f ms) — %u probes, %d inside solid map, "
-           "%d non-finite SH coeffs, %d non-zero; mean DC irradiance rgb(%.3f, %.3f, %.3f)\n",
-           CpuNowMs() - bakeT0, g.probeCount, invalid, nonFinite, nonZero,
+    printf("RB_Vulkan: GI bake done (3 bounces, %.1f ms; passes %.0f/%.0f/%.0f ms) — %u probes, "
+           "%d inside solid map, %d non-finite SH coeffs, %d non-zero; mean DC irradiance "
+           "rgb(%.3f, %.3f, %.3f)\n",
+           CpuNowMs() - bakeT0, passMs[0], passMs[1], passMs[2], g.probeCount, invalid,
+           nonFinite, nonZero,
            dcSum[0] / nValid, dcSum[1] / nValid, dcSum[2] / nValid);
     // The probe's own position rides in floats 0..2 of its record, and printing it is what
     // makes the number actionable: it is the `-warpto` coordinate of the worst case, so the
@@ -9574,7 +9618,8 @@ void BuildProbes()
             CreateRtBuffer(lsz,
                 VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
                 VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-                &g.lightBufSlot[s], &g.lightMemSlot[s]);
+                &g.lightBufSlot[s], &g.lightMemSlot[s], "light",
+                VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);   // see EnsureLightSlot
             Check(vkMapMemory(g.device, g.lightMemSlot[s], 0, VK_WHOLE_SIZE, 0, &g.lightMappedSlot[s]), "vkMapMemory(light)");
             std::memset(g.lightMappedSlot[s], 0, (size_t)lsz);
             g.lightSlotBytes[s] = lsz;
@@ -9601,8 +9646,10 @@ void BuildProbes()
             {
                 const size_t c = (size_t)iy * f->w + ix;
                 float fz = 0.0f, cz = 0.0f;
-                if (RB_SectorPlanesAtPoint(f->originX + ix * f->cell, f->originY + iy * f->cell,
-                                           &fz, &cz) < 0 || !(cz > fz))
+                // DOOM-0652 B4: the seep field's void test drops a column inside a wall or
+                // out past the map before any probe is baked there. The bake's back-hit
+                // flag stays for what this misses.
+                if (!RB_SeepCellAir(f, ix, iy, &fz, &cz) || !(cz > fz))
                     continue;
                 colF[c] = fz; colC[c] = cz;
                 zmin = std::min(zmin, fz); zmax = std::max(zmax, cz);
@@ -9640,10 +9687,13 @@ void BuildProbes()
     // them across bounce passes, and each pass reads its WRITE buffer's positions.
     if (g.probeCount > 0)
     {
+        // DOOM-0652 B4: in the card's own memory, as DOOM-0611 did for the vertices.
+        // Every raster pixel reads 8 probes; from system RAM that is a fetch across
+        // the bus each frame.
         UploadAddressBuffer(rec.data(), (VkDeviceSize)rec.size() * sizeof(float),
-                            &g.probeBuf, &g.probeMem);
+                            &g.probeBuf, &g.probeMem, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
         UploadAddressBuffer(rec.data(), (VkDeviceSize)rec.size() * sizeof(float),
-                            &g.probeBuf2, &g.probeMem2);
+                            &g.probeBuf2, &g.probeMem2, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
     }
 
     // Per-triangle subsector id (step 4c): the megakernel indexes it by primitive id to
