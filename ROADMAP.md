@@ -19722,6 +19722,15 @@ in CLAUDE.md describes.
   scratch/val/val.sh it passes (0.1973%). Unknown whether the test is
   only valid at the start or the estimator is wrong at that spot (near
   the light panels). Refute: find which setting or position moves it.
+  2026-11-22, 3a86047, private GPU display (Scratchpad d0653/rv.sh, Ultra,
+  rt_fog 0, no player config). E1M1 default start, all lights:
+  9.9488% FAIL; 59 sprite lights are now present on the first frame,
+  so the verify path covers them and fails. Same start, -lightlab 3
+  (static only): 0.2027% PASS. Courtyard -warpto 1833 -3622 107,
+  -lightlab 3: 62.9448% FAIL. DOOM-0653's pick is expected to tell
+  the old pick's noise from bias at the courtyard; its B1 records it.
+  Under Xvfb (not cage) -rtverify hung for 27 minutes and ignored
+  timeout's TERM; run it under xwfb-run cage.
   **Layman:** The ray tracer's built-in self-test only passes at the level's start; run elsewhere it reports a failure that may be real or may be the test's own limit.
   Kind: investigate.
   Source: found-2026-11-09-DOOM-0565.
@@ -21334,6 +21343,10 @@ in CLAUDE.md describes.
   spends most samples on lights that give it nothing. Plan: pick from
   the cell list that DOOM-0652's shared light grid builds, weighted by
   estimated contribution at the point. Blocked by DOOM-0652 B1.
+  Spec: docs/specs/DOOM-0653-cell-light-pick.md (2026-11-22). Baseline
+  speckle, E1M1, -rtview 4, wall and flat lights only: start room
+  77.26, courtyard 24.29 specks per 1000 dim pixels (Scratchpad
+  d0653/speck.py); lamps alone 7.57. The static pick makes the grain.
   **Layman:** In the ray-traced view, dark corners look grainy because the game spends its light samples on bright lamps far away instead of the ones nearby.
   Kind: fix.
   Source: user-2026-11-21 (light lab handoff).
