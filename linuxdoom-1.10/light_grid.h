@@ -264,7 +264,8 @@ inline void ClearDynLists(std::vector<uint32_t>& cells, const std::vector<uint32
 // map the same way; shader_mirror_test.cpp holds the constants equal.
 // ---------------------------------------------------------------------------------------
 
-// Directions per light: a bin is about 12 units wide at the 512-unit range cap. MUST
+// Directions per light: at the 512-unit range cap a bin is about 8 units wide on the axes
+// and 16 on the diagonals (PolarCoord is a diamond angle, not an even one). MUST
 // equal mesh.frag's RASTER_POLAR_BINS.
 static const uint32_t RASTER_POLAR_BINS  = 256;
 // A fragment is tested this far off its own surface along its geometric normal, so a wall

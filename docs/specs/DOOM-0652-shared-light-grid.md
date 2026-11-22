@@ -279,6 +279,11 @@ Each stage ends with `make`, `make test` and the § 8 captures.
   The fix would be per-bin opening heights, checked against the fragment's height.
 - Ceilings take the same polar map as floors. A ceiling lamp above a lip is not shadowed by the
   lip.
+- INV-6 holds only for walls along the axes: reach is measured along ±x, ±y and ±z, so a
+  diagonal wall does not block a corner. When no corner reaches, all present corners blend
+  unmasked, so a corridor narrower than a cell takes its neighbours' light (Vestige,
+  2026-11-22). Diagonal reach rays hid light from E1M1's start-room pillars. The planned fix
+  is a polar wall map per probe (ROADMAP DOOM-0652, B5).
 
 ## 11. What checks this
 

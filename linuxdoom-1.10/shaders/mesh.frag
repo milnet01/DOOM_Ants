@@ -713,8 +713,8 @@ void main()
                     if (reach < 0.0)      plamp  += lit * pool;
                 }
             }
-            // A big emissive surface enters as many emitter triangles, so summing the
-            // nearest N over-counts one physical light. GAIN drives a single light up to
+            // A big emissive surface enters as several clustered lights, so summing a
+            // cell's list over-counts one physical light. GAIN drives a single light up to
             // visible fast, then a Reinhard roll-off caps the accumulated point light at
             // < 1 per channel so a cluster saturates gracefully to its colour instead of
             // stacking to white; STRENGTH is the max additive level after that.

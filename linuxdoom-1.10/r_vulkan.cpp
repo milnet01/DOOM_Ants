@@ -11225,8 +11225,8 @@ static void BuildFrameInputs(bool rtActive, bool cprof, bool doReheight)
         // sprites (torches/lamps/barrels) in the NEE emitter list. The traced branch
         // below builds the world sprites into g.sprWorldCpu; the raster branch above
         // only built the drawn billboards (into g.spriteMapped), so build the world-
-        // sprite set here too, refresh the emitter list, then rebuild the per-subsector
-        // nearest-N point-light lists the fragment shader reads. RT-GPU only (no
+        // sprite set here too, refresh the emitter list, then rebuild the light grid's
+        // per-cell lists the fragment shader reads. RT-GPU only (no
         // emitters/probes without a bake); costs one sprite build + the <=1 ms cull.
         // The set stays in RAM: no raster pass reads g.sprWorldBuf (DOOM-0569).
         if (g.rtEnabled && g.sprWorldMapped)
@@ -11242,7 +11242,7 @@ static void BuildFrameInputs(bool rtActive, bool cprof, bool doReheight)
                 g.worldEmitDirty = false;
             }
             BuildDynamicEmitters();     // refill g.emitBuf (static + emissive sprites)
-            BuildRasterPointLights();   // -> g.lightBuf (per-subsector nearest-N)
+            BuildRasterPointLights();   // -> g.lightBuf (the light grid's cell lists)
             if (cprof) g.cpuBuildMs[1] += CpuNowMs() - tL0;   // emitter refill + point-light cull
         }
     }

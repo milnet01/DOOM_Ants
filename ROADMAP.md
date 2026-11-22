@@ -1,6 +1,6 @@
 <!-- ants-roadmap-format: 1 -->
 <!-- Generated from the Ants Terminal roadmap store. Edit it with roadmap_log; hand edits are discarded by the next write. -->
-<!-- ants-roadmap-id-high-water: DOOM=654 -->
+<!-- ants-roadmap-id-high-water: DOOM=655 -->
 
 # Roadmap
 
@@ -14252,6 +14252,20 @@ defect visible before a player finds it.
   Kind: chore.
   Source: frameledger-guide-review-2026-11-22.
 
+- 📋 [DOOM-0655] **The light grid's C and GLSL copies are held together by constants only, not by their logic.**
+  shader_mirror_test.cpp compares constants. Nothing compares what
+  PolarCoord/polarCoord, PolarLit/mesh.frag's inline copy,
+  ProbeBlendSH/giIrradianceAt or RasterFalloff compute. A parity test
+  on sample points would catch a one-sided edit. Tests run with no GPU,
+  so this needs a way to run the GLSL off the GPU (e.g. compile it as
+  C++ through a shim) or a GPU-gated test. Vestige also noted no source
+  is written for RASTER_LIGHT_CUTOFF, RASTER_LIGHT_MAXRANGE,
+  RASTER_POLAR_NBIAS/SOFT, RB_PROBE_DZ, RB_PROBE_MAXLAYERS and
+  BAKE_BACK_MAX; record where each came from while here.
+  **Layman:** Two copies of the lighting maths (one for tests, one on the graphics card) could drift apart unnoticed.
+  Kind: test.
+  Source: vestige-code-review-2026-11-22.
+
 ## 0.11.0 — The frame budget
 
 Performance and pacing, and the benchmark harness that makes a regression
@@ -21254,6 +21268,20 @@ in CLAUDE.md describes.
   MAP24 (41671 probes), 2.1 s MAP15. Scene pass, Solid rasterised, 100 %,
   quiet machine, B2 -> B3: E1M1 0.47 -> 1.16 ms, E1M4 1.22 -> 2.08,
   E3M6 4.06 -> 5.08, MAP28 1.96 -> 2.90.
+  2026-11-22: B4 shipped 919979e. Vestige's code review: no blocker; two
+  should-fix leaks in the probe blend. (1) Reach is six axis rays tested
+  as a box, so a wall at 45 degrees does not block a corner. (2) When no
+  corner reaches, all present corners blend unmasked, so a corridor
+  narrower than a cell takes the next rooms' light. Tried here: four
+  diagonal reach rays, as a half-plane and as a nearest-ray distance.
+  Both hid light from E1M1's start-room pillars (a ray clipping a
+  pillar corner, or a flat face, rejects points that see the probe),
+  so neither shipped; patch kept in Scratchpad d0652. Planned B5: a
+  small polar wall map per probe, drawn on the CPU from the 2D lines as
+  B2 does for lamps (exact for vertical walls; ±z reach stays), plus
+  moving a void column's probe into the cell's air so narrow corridors
+  get their own. Vestige's nit: the polar lookup tapers a lamp shadow
+  for about half a bin past a pillar edge. UT_Ants' review is pending.
   **Layman:** The smooth view lights the map in invisible patches, and the light jumps where two patches meet, drawing straight lines on floors.
   Kind: fix.
   Source: user-2026-11-21.
