@@ -1412,8 +1412,8 @@ PrimaryHit primaryHitSurface(Verts vb, uint i0, bool isSprite, vec2 hitUV, vec3 
     return h;
 }
 
-// The inputs to lighting a primary hit: the probe subsector, the REJECT sector, the shading
-// normal and the shadow-ray origin.
+// The inputs to lighting a primary hit: its subsector (for the REJECT sector), the REJECT
+// sector, the shading normal and the shadow-ray origin.
 struct PrimaryLight {
     uint subId;
     uint hitSec;
@@ -1428,12 +1428,13 @@ PrimaryLight primaryHitLighting(PrimaryHit h, bool isSprite, int prim, vec3 n)
     // DOOM-0119: this hit's owning sector for the REJECT light cull. World hit
     // -> subsector (triSs) -> sector (subSec); sprite hits + the no-REJECT case
     // pass 0xFFFFFFFF (unknown) so shadeSurface leaves every light in play.
-    // DOOM-0439: the subsector is read ONCE, for this and for the GI lookup, and
-    // probeCount (misc2.y) gates the read itself (DOOM-0407): with no bake, triSs is
-    // address 0. Sprites have no GI probe, so they get the out-of-range id too.
+    // DOOM-0439: the subsector is read ONCE, here, and probeCount (misc2.y) gates the read
+    // itself (DOOM-0407): with no bake, triSs is address 0. Sprites take the unknown id,
+    // and so do the triangles the mesh tags with none (-1). It also gates the GI lookup,
+    // which since DOOM-0652 B3 goes by position, not by this id.
     s.subId  = (isSprite || pc.misc2.y == 0u) ? 0xFFFFFFFFu : pc.triSs.s[uint(prim)];
     s.hitSec = 0xFFFFFFFFu;
-    if (pc.misc4.z > 0u && s.subId < pc.misc2.y)
+    if (pc.misc4.z > 0u && s.subId != 0xFFFFFFFFu)
         s.hitSec = pc.subSec.s[s.subId];
     // DOOM-0181 L2: de-tile the normal in lockstep with the albedo (same world cell), so a
     // mirrored/offset tile's relief matches its colour. INV-2: detileNormalTS negates the
@@ -1479,8 +1480,8 @@ vec3 primaryHitAddTerms(vec3 L, PrimaryHit h, PrimaryLight s, vec3 n, float secL
     // DOOM-0630: the room's light through the same horror curve as the rasterised view.
     vec3 ambient = vec3(max(horrorSectorShade(secLight) * AMBIENT_SECTOR_SCALE, AMBIENT_FLOOR));
     if (sourcedLightOnly()) ambient = vec3(0.0);   // DOOM-0642: the bounce alone
-    vec3 gi      = (s.subId < pc.misc2.y) ? giIrradiance(pc.probes, s.subId, s.shadeN)
-                                          : vec3(0.0);
+    vec3 gi      = (s.subId != 0xFFFFFFFFu) ? giIrradianceAt(pc.probes, h.hitP, s.shadeN)
+                                            : vec3(0.0);
     L += modAlbedo * max(gi, ambient) * h.ao;   // AO dims fill light only
 
     // DOOM-0183 L3/L5: wet sheen (direct-light specular, INV-3 — no reflection ray) on

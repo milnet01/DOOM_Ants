@@ -1,7 +1,7 @@
 <!-- ants-spec-format: 1 -->
 # DOOM-0652 — Light that fades smoothly: a shared light grid, wall-true lamp shadows and blended bounce light
 
-**Status:** accepted (2026-11-21). B1 and B2 built; B3 is next.
+**Status:** accepted (2026-11-21). B1, B2 and B3 built; B4 is next.
 **Kind:** fix.
 **Source:** ROADMAP DOOM-0652 (user report 2026-11-21, light lab on E1M1).
 **Also closes:** DOOM-0649 (dim lights crowd bright ones out of a subsector's 16 slots): the
@@ -150,15 +150,25 @@ Probes sit on a 3D lattice:
 
 - xy spacing is the seep cell's;
 - z spacing is `RB_PROBE_DZ`, doubled until the layers fit `RB_PROBE_MAXLAYERS`;
-- only points in the air of some sector are baked.
+- a layer in the air of the column's sector is baked where it stands. A layer outside that
+  air by less than one spacing moves into it, `RB_PROBE_MARGIN` inside the floor or
+  ceiling, so a room lower than the spacing still has probes (`lgrid::ProbeLayerZ`).
+  Other layers are not baked.
+
+The sector lookup cannot tell a point in solid map from one in the air beside it. So the
+bake marks a probe invalid when more than `BAKE_BACK_MAX` of its rays land on the back of a
+surface, and readers drop it like an unbaked one.
 
 `bake.comp` is unchanged but for its positions. Every probe seeds by ray index only, so
 neighbouring probes share their noise. Each probe also stores its reach: the distance to the
 first surface along ±x, ±y and ±z.
 
 `giIrradianceAt(pos, n)` blends the 8 lattice corners around `pos + n * RB_PROBE_NBIAS`
-trilinearly. A corner is dropped when it is not baked, or when its reach toward the point falls
-short of it. Its weight goes to the corners left; with none left the answer is zero.
+trilinearly. A corner is dropped when it is not baked, or when its reach toward the point
+falls short of it by more than `RB_PROBE_SLACK`. Its weight goes to the corners left. When
+every present corner falls short, they blend with no reach test (UT_Ants' `indirectAt`), as
+a point on a ledge between probes would otherwise go black. With no corner present the
+answer is zero. `lgrid::ProbeBlendSH` is the C copy the tests read.
 
 `mesh.frag`, `pathtrace.comp` and `bake.comp`'s bounce passes call it in place of
 `giIrradiance(…, subId, …)`.
@@ -171,9 +181,10 @@ short of it. Its weight goes to the corners left; with none left the answer is z
   copy per frame in flight in `g.lightBufSlot`, grown to fit. It replaces the per-subsector
   `lightBuf`.
 - Polar maps: lights × `RASTER_POLAR_BINS` floats, in the light buffer after each light table.
-- Probes: lattice points × (16 floats today + 6 reach). The dense lattice is bounded by the seep
-  field's `RB_SEEP_MAXDIM` squared, times `RB_PROBE_MAXLAYERS`. B4 measures the largest IWAD
-  map's bake time before the caps are fixed.
+- Probes: a header, one index float per lattice point, and a 24-float record (position,
+  valid flag, SH, reach) per baked probe; `light_grid.h` gives the layout. The index is
+  bounded by the seep field's `RB_SEEP_MAXDIM` squared, times `RB_PROBE_MAXLAYERS`. B4
+  measures the largest IWAD map's bake time before the caps are fixed.
 - Push constants: `pc.triSs` stays for the traced view and specular. The light and probe
   addresses change meaning; the 128-byte block keeps its size.
 

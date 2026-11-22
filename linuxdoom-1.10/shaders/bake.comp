@@ -3,8 +3,8 @@
 // DOOM-0009 path tracer — static GI bake (build step 4b-ii).
 //
 // DOOM's lighting is ~95% static, so the bounced (indirect) light is solved ONCE
-// at level load instead of every frame. One compute thread per GI probe (placed
-// one-per-subsector at the convex-cell centroid, build step 4b-i): the thread
+// at level load instead of every frame. One compute thread per GI probe (on the
+// DOOM-0652 B3 lattice, layout in light_grid.h): the thread
 // fires BAKE_RAYS sample rays over the full sphere, shades each hit with the SAME
 // NEE direct-lighting the camera frame uses (shadeSurface, pt_common.glsl), and
 // projects the incoming radiance onto an SH-L1 (4-coefficient) directional basis.
@@ -32,9 +32,9 @@ layout(set = 1, binding = 2) uniform sampler2D materialTex[];
 
 #include "pt_common.glsl"
 
-// The GI probe buffer (read-write by GPU address). 16 floats/probe: pos[3] + pad
-// then SH-L1 radiance, channel-major R[4] G[4] B[4]. The host wrote the positions
-// (SH zeroed); this pass fills the SH.
+// The GI probe buffer (read-write by GPU address), laid out as light_grid.h says. The
+// host wrote the header, index and positions; this pass fills each record's SH-L1
+// radiance, its reach along the six axes, and its valid flag.
 layout(buffer_reference, scalar) buffer Probes { float p[]; };
 
 layout(push_constant) uniform PC {
@@ -45,19 +45,36 @@ layout(push_constant) uniform PC {
     MatEmis  matEmis;  // per-material Le table
     Probes   probes;   // GI probe buffer (this pass's output)
     ProbesRO prevProbes; // previous bounce pass's probes (read for multi-bounce)
-    TriSs    triSs;     // per-triangle subsector id -> probe index
+    TriSs    triSs;     // unused since DOOM-0652 B3 (bounces read the lattice by position)
     EmitSec  emitSec;  // DOOM-0119: unused here (always 0) — the bake's omni loop is
     Reject   reject;   // empty (omniStart == emitCount), so shadeSurface's REJECT cull
                        // is dead; passed only to satisfy the shared signature.
 } pc;
 
-const uint  BAKE_RAYS = 256u;   // sphere samples/probe. SH-L1 is very low frequency,
-                                // so a few hundred uniform directions converge it
-                                // smoothly; the bake is one-time so cost is cheap.
+const uint  BAKE_RAYS = 128u;   // sphere samples/probe. SH-L1 is very low frequency,
+                                // and every probe casts the same directions (DOOM-0652
+                                // B3), so what error is left varies smoothly across
+                                // the lattice. The lattice holds tens of thousands of
+                                // probes on the largest maps, so this sets load time.
 const uint  BAKE_NEE  = 1u;     // shadow rays per bake-ray hit. 1 suffices — the
                                 // sphere integration already averages over BAKE_RAYS
                                 // directions, so per-hit direct-light variance washes
                                 // out into the low-order SH.
+// DOOM-0652 B3: a probe that sees more than this share of its rays land on the back of a
+// surface sits inside solid map (the lattice is placed by sector, which cannot tell), and
+// is marked invalid. A few back hits are normal: a two-sided middle texture has one face.
+const float BAKE_BACK_MAX = 0.25;
+const float BAKE_REACH_FAR = 1.0e4;   // reach along an axis that meets nothing
+
+// Distance from P along d to the first world surface, BAKE_REACH_FAR if none.
+float bakeReach(vec3 P, vec3 d)
+{
+    rayQueryEXT rq;
+    rayQueryInitializeEXT(rq, topAS, gl_RayFlagsOpaqueEXT, 0x01u, P, 0.01, d, BAKE_REACH_FAR);
+    while (rayQueryProceedEXT(rq)) {}
+    return rayQueryGetIntersectionTypeEXT(rq, true) == gl_RayQueryCommittedIntersectionTriangleEXT
+         ? rayQueryGetIntersectionTEXT(rq, true) : BAKE_REACH_FAR;
+}
 
 void main()
 {
@@ -65,16 +82,19 @@ void main()
     if (pi >= pc.misc.x)
         return;
 
-    const uint base = pi * 16u;
+    const uint dims = uint(pc.probes.p[5]) * uint(pc.probes.p[6]) * uint(pc.probes.p[7]);
+    const uint base = GI_PROBE_HDR + dims + pi * GI_PROBE_REC;
     const vec3 P = vec3(pc.probes.p[base + 0u], pc.probes.p[base + 1u], pc.probes.p[base + 2u]);
 
     // SH-L1 radiance accumulators per colour channel (4 coeffs each: l=0 + 3*l=1).
     vec4 shR = vec4(0.0), shG = vec4(0.0), shB = vec4(0.0);
-
-    uint seed = pcgHash(pi * 9781u + 1u);
+    uint backHits = 0u;
 
     for (uint s = 0u; s < BAKE_RAYS; s++)
     {
+        // DOOM-0652 B3: seeded by ray index only, so every probe casts the same directions
+        // and neighbours share their noise; a blend between them then shows no grain.
+        uint seed = pcgHash(s * 9781u + 1u);
         // Uniform direction on the full sphere (z = 1 - 2u maps to cos-uniform).
         float u1 = rnd(seed), u2 = rnd(seed);
         float z   = 1.0 - 2.0 * u1;
@@ -103,7 +123,7 @@ void main()
             const int  prim = rayQueryGetIntersectionPrimitiveIndexEXT(rq, true);
             const uint i0   = uint(prim) * 3u * 18u;
             vec3 n = normalize(vec3(pc.verts.v[i0 + 3u], pc.verts.v[i0 + 4u], pc.verts.v[i0 + 5u]));
-            if (dot(n, wi) > 0.0) n = -n;
+            if (dot(n, wi) > 0.0) { n = -n; backHits++; }   // the mesh's normals face the air
             int   texnum = floatBitsToInt(pc.verts.v[i0 + 8u]);
             int   flags  = floatBitsToInt(pc.verts.v[i0 + 9u]);
             uint  id     = ((flags & FLAG_FLAT) != 0) ? (pc.misc.y + uint(texnum))
@@ -142,11 +162,7 @@ void main()
             // received from the PREVIOUS bounce's probes. Pass 1 builds 1-bounce
             // indirect; feeding it back makes pass 2 = 2 bounces, pass 3 = 3, etc.
             if (pc.misc.w != 0u)
-            {
-                uint subId = pc.triSs.s[uint(prim)];
-                if (subId < pc.misc.x)
-                    Li += albedo * giIrradiance(pc.prevProbes, subId, n);
-            }
+                Li += albedo * giIrradianceAt(pc.prevProbes, hitP, n);
         }
         else
         {
@@ -178,4 +194,14 @@ void main()
     pc.probes.p[base + 10u] = shG.z; pc.probes.p[base + 11u] = shG.w;
     pc.probes.p[base + 12u] = shB.x; pc.probes.p[base + 13u] = shB.y;
     pc.probes.p[base + 14u] = shB.z; pc.probes.p[base + 15u] = shB.w;
+
+    // DOOM-0652 B3: the reach giIrradianceAt tests a point against, and the valid flag.
+    // Every pass writes both into its own buffer, and the same seeds give the same answer.
+    pc.probes.p[base + 16u] = bakeReach(P, vec3( 1, 0, 0));
+    pc.probes.p[base + 17u] = bakeReach(P, vec3(-1, 0, 0));
+    pc.probes.p[base + 18u] = bakeReach(P, vec3( 0, 1, 0));
+    pc.probes.p[base + 19u] = bakeReach(P, vec3( 0,-1, 0));
+    pc.probes.p[base + 20u] = bakeReach(P, vec3( 0, 0, 1));
+    pc.probes.p[base + 21u] = bakeReach(P, vec3( 0, 0,-1));
+    pc.probes.p[base + 3u]  = (float(backHits) > BAKE_BACK_MAX * float(BAKE_RAYS)) ? 0.0 : 1.0;
 }

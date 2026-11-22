@@ -1160,19 +1160,19 @@ struct VulkanState
     std::vector<int32_t> staticEmitSs;
     std::vector<int>     liquidMatIds;              // unified ids of the liquid flats
 
-    // GI bake probes (DOOM-0009 build step 4). One irradiance probe per subsector
-    // (placed by RB_BuildProbes at the convex-cell centroid), baked once per level
-    // load. Each record is 16 floats: pos[3] + pad + SH-L1 directional irradiance
-    // (channel-major: R[4] G[4] B[4]). A host-visible device-address SSBO — the CPU
-    // writes the positions, the bake compute pass writes the SH payload, and the
-    // megakernel reads it to replace the flat ambient fill (step 4c). RT-gated.
+    // GI bake probes (DOOM-0009 build step 4, DOOM-0652 B3). The probes stand on a 3D
+    // lattice (BuildProbes), baked once per level load; the buffer's layout is
+    // light_grid.h's (header, index, records). A host-visible device-address SSBO — the
+    // CPU writes the positions, the bake compute pass writes the SH and reach, and
+    // mesh.frag and the megakernel blend it by world position (giIrradianceAt). RT-gated.
     VkBuffer       probeBuf   = VK_NULL_HANDLE;
     VkDeviceMemory probeMem   = VK_NULL_HANDLE;
-    uint32_t       probeCount = 0;
+    uint32_t       probeCount = 0;            // records on the lattice; 0 = no bake
+    lgrid::ProbeLattice probeLattice = {};
     // Second probe buffer + per-triangle subsector-id buffer (step 4c). The bake
     // ping-pongs probeBuf <-> probeBuf2 across bounce passes (read the previous
-    // pass, write the current); the final bounce lands in probeBuf, which the
-    // megakernel reads, keyed per hit by triSsBuf (triangle -> subsector -> probe).
+    // pass, write the current); the final bounce lands in probeBuf. triSsBuf maps a
+    // triangle to its subsector, which the megakernel's REJECT cull reads.
     VkBuffer       probeBuf2  = VK_NULL_HANDLE;
     VkDeviceMemory probeMem2  = VK_NULL_HANDLE;
     VkBuffer       triSsBuf   = VK_NULL_HANDLE;
@@ -9117,9 +9117,6 @@ void BuildFogLightGrid()
 
 }
 
-// 16 floats per GI probe: pos[3] + pad + SH-L1 directional irradiance (channel-
-// major R[4] G[4] B[4]). Must match the bake shader and the megakernel's read.
-static const uint32_t PROBE_FLOATS = 16;
 
 // Make this command buffer's earlier device writes visible to the host, for a buffer
 // the CPU maps and reads once the submit has been waited on. The wait is not enough on
@@ -9153,6 +9150,7 @@ void RunGiBake()
         g.matEmisBuf == VK_NULL_HANDLE)
         return;
 
+    const double bakeT0 = CpuNowMs();
     // Point the bake set's TLAS half at this level's freshly built TLAS.
     VkWriteDescriptorSetAccelerationStructureKHR asInfo = {};
     asInfo.sType                      = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR;
@@ -9221,13 +9219,14 @@ void RunGiBake()
     void* mapped = nullptr;
     Check(vkMapMemory(g.device, g.probeMem, 0, VK_WHOLE_SIZE, 0, &mapped), "vkMapMemory(probeReadback)");
     const float* pf = (const float*)mapped;
-    int   nonFinite = 0, nonZero = 0;
+    int   nonFinite = 0, nonZero = 0, invalid = 0;
     double dcSum[3] = { 0, 0, 0 };
+    const size_t rec0 = lgrid::ProbeRecBase(g.probeLattice);
     // DOOM-0331 §10 Q5 — the map's AMBIENT ceiling, which INV-4's ramp start has to clear.
     // mesh.frag writes AMBIENT = albedo * sect + GI_BOUNCE_STRENGTH * albedo *
-    // giIrradiance(probe, n), so with albedo <= 1 (paletted art) and sect <=
+    // giIrradianceAt(pos, n), a convex blend of probes, so with albedo <= 1 (paletted art) and sect <=
     // BASE_SECTOR_DIM (0.75), map-wide
-    //     AMBIENT <= 0.75 + GI_BOUNCE_STRENGTH * max over probes and normals of giIrradiance()
+    //     AMBIENT <= 0.75 + GI_BOUNCE_STRENGTH * max over probes and normals of giEvalSH()
     // and that second term is a closed form of the SH-L1 payload already mapped here, so
     // the bound costs one pass over data the finiteness scan is walking anyway. It is a
     // BOUND, not a sample: taken per channel independently and over every normal DOOM can
@@ -9239,7 +9238,9 @@ void RunGiBake()
     const float kY00 = 0.282095f, kL1 = (2.0f / 3.0f) * 0.488603f;
     for (uint32_t i = 0; i < g.probeCount; i++)
     {
-        const float* sh = &pf[(size_t)i * PROBE_FLOATS + 4];   // 12 SH floats
+        const float* r  = &pf[rec0 + (size_t)i * lgrid::PROBE_REC];
+        if (r[3] == 0.0f) { invalid++; continue; }             // inside solid map
+        const float* sh = r + 4;                               // 12 SH floats
         for (int k = 0; k < 12; k++)
         {
             if (!std::isfinite(sh[k]))      nonFinite++;
@@ -9248,8 +9249,8 @@ void RunGiBake()
         // DC term per channel (sh[0], sh[4], sh[8]) * Y00 = average radiance.
         dcSum[0] += sh[0] * 0.282095; dcSum[1] += sh[4] * 0.282095; dcSum[2] += sh[8] * 0.282095;
 
-        // Per channel: basis order is 1<-n.y, 2<-n.z, 3<-n.x (giIrradiance()). A horizontal
-        // normal maximises sqrt(c1^2 + c3^2); a flat's normal maximises |c2|. giIrradiance
+        // Per channel: basis order is 1<-n.y, 2<-n.z, 3<-n.x (giEvalSH()). A horizontal
+        // normal maximises sqrt(c1^2 + c3^2); a flat's normal maximises |c2|. giEvalSH
         // clamps its result to >= 0, so a negative lobe cannot lower the ceiling either.
         for (int c = 0; c < 3; c++)
         {
@@ -9264,16 +9265,17 @@ void RunGiBake()
             if (m > giMax)
             {
                 giMax = m; giMaxProbe = i;
-                const float* pos = &pf[(size_t)i * PROBE_FLOATS];
+                const float* pos = r;
                 giProbePos[0] = pos[0]; giProbePos[1] = pos[1]; giProbePos[2] = pos[2];
             }
         }
     }
     vkUnmapMemory(g.device, g.probeMem);
-    printf("RB_Vulkan: GI bake done (3 bounces) — %u probes, %d non-finite SH coeffs, "
-           "%d non-zero; mean DC irradiance rgb(%.3f, %.3f, %.3f)\n",
-           g.probeCount, nonFinite, nonZero,
-           dcSum[0] / g.probeCount, dcSum[1] / g.probeCount, dcSum[2] / g.probeCount);
+    const double nValid = std::max((int)g.probeCount - invalid, 1);
+    printf("RB_Vulkan: GI bake done (3 bounces, %.1f ms) — %u probes, %d inside solid map, "
+           "%d non-finite SH coeffs, %d non-zero; mean DC irradiance rgb(%.3f, %.3f, %.3f)\n",
+           CpuNowMs() - bakeT0, g.probeCount, invalid, nonFinite, nonZero,
+           dcSum[0] / nValid, dcSum[1] / nValid, dcSum[2] / nValid);
     // The probe's own position rides in floats 0..2 of its record, and printing it is what
     // makes the number actionable: it is the `-warpto` coordinate of the worst case, so the
     // photographic half of INV-4's test can be pointed at the surface this bound describes
@@ -9516,8 +9518,8 @@ bool RB_RtVerify()
     return pass;
 }
 
-// Place this level's GI-bake probes (DOOM-0009 build step 4b-i): one per subsector
-// (RB_BuildProbes), uploaded as PROBE_FLOATS records with the SH payload zeroed —
+// Place this level's GI-bake probes (DOOM-0009 build step 4b-i, DOOM-0652 B3): a 3D
+// lattice over the seep field, uploaded with the SH payload zeroed —
 // the bake compute pass (4b-ii) fills it, the megakernel reads it (4c). Rebuilt
 // per level; no-op without RT. The buffer is host-visible so the bake's GPU writes
 // stay coherent for the trace's reads.
@@ -9543,7 +9545,8 @@ void BuildProbes()
     g.lightBuf = VK_NULL_HANDLE; g.lightMem = VK_NULL_HANDLE; g.lightMapped = nullptr;
     g.subCentroid.clear();
     g.subSecSector.clear();
-    g.probeCount = 0;
+    g.probeCount   = 0;
+    g.probeLattice = {};
     g.numSectors = 0;
 
     if (!g.rtEnabled || !g.levelMesh)
@@ -9555,7 +9558,6 @@ void BuildProbes()
 
     std::vector<rb_probe_t> probes(n);
     const int got = RB_BuildProbes(probes.data(), n);
-    g.probeCount = (uint32_t)got;
 
     // DOOM-0170 L1b: cache the subsector centroids (which way a light faces, DOOM-0652)
     // and allocate the raster light buffer. Host-visible + mapped: BuildRasterPointLights
@@ -9583,23 +9585,70 @@ void BuildProbes()
         g.lightMapped = g.lightMappedSlot[g.frameSlot];
     }
 
-    std::vector<float> rec((size_t)got * PROBE_FLOATS, 0.0f);   // SH zeroed
-    for (int i = 0; i < got; i++)
-    {
-        rec[(size_t)i * PROBE_FLOATS + 0] = probes[i].x;
-        rec[(size_t)i * PROBE_FLOATS + 1] = probes[i].y;
-        rec[(size_t)i * PROBE_FLOATS + 2] = probes[i].z;
-    }
+    // DOOM-0652 B3: the probes stand on a 3D lattice over the seep field's cells, not one
+    // per subsector (spec 4.5). Each column takes the layers in or within one layer of its
+    // sector's air (lgrid::ProbeLayerZ); the bake marks a point that turns out to be inside
+    // solid map invalid. Header, index and records: light_grid.h.
+    std::vector<float> rec;
+    [&rec]() {
+        const rb_seep_t* f = g.seepField;
+        if (!f || f->w <= 0 || f->h <= 0 || !(f->cell > 0.0f))
+            return;
+        std::vector<float> colF((size_t)f->w * f->h, 0.0f), colC((size_t)f->w * f->h, 0.0f);
+        float zmin = 1e30f, zmax = -1e30f;
+        for (int iy = 0; iy < f->h; iy++)
+            for (int ix = 0; ix < f->w; ix++)
+            {
+                const size_t c = (size_t)iy * f->w + ix;
+                float fz = 0.0f, cz = 0.0f;
+                if (RB_SectorPlanesAtPoint(f->originX + ix * f->cell, f->originY + iy * f->cell,
+                                           &fz, &cz) < 0 || !(cz > fz))
+                    continue;
+                colF[c] = fz; colC[c] = cz;
+                zmin = std::min(zmin, fz); zmax = std::max(zmax, cz);
+            }
+        if (!(zmax > zmin))
+            return;
+        const lgrid::ProbeLattice L =
+            lgrid::MakeProbeLattice(f->originX, f->originY, f->cell, f->w, f->h, zmin, zmax);
+        rec.assign(lgrid::ProbeRecBase(L), -1.0f);
+        const float hdr[lgrid::PROBE_HDR] = { L.ox, L.oy, L.oz, L.cell, L.dz,
+                                              (float)L.nx, (float)L.ny, (float)L.nz };
+        std::copy(hdr, hdr + lgrid::PROBE_HDR, rec.begin());
+        uint32_t count = 0;
+        for (int iz = 0; iz < L.nz; iz++)
+            for (int iy = 0; iy < L.ny; iy++)
+                for (int ix = 0; ix < L.nx; ix++)
+                {
+                    const size_t c = (size_t)iy * L.nx + ix;
+                    const float  z = lgrid::ProbeLayerZ(L.oz + iz * L.dz, L.dz, colF[c], colC[c]);
+                    if (std::isnan(z))
+                        continue;
+                    rec[lgrid::PROBE_HDR + (size_t)iz * L.nx * L.ny + c] = (float)count++;
+                    const size_t r = rec.size();
+                    rec.resize(r + lgrid::PROBE_REC, 0.0f);   // SH and reach zeroed
+                    rec[r + 0] = L.ox + ix * L.cell;
+                    rec[r + 1] = L.oy + iy * L.cell;
+                    rec[r + 2] = z;
+                    rec[r + 3] = 1.0f;                         // valid until the bake says not
+                }
+        g.probeCount   = count;
+        g.probeLattice = L;
+    }();
 
     // Both probe buffers get the positions (SH zeroed): the bake ping-pongs between
     // them across bounce passes, and each pass reads its WRITE buffer's positions.
-    UploadAddressBuffer(rec.data(), (VkDeviceSize)rec.size() * sizeof(float),
-                        &g.probeBuf, &g.probeMem);
-    UploadAddressBuffer(rec.data(), (VkDeviceSize)rec.size() * sizeof(float),
-                        &g.probeBuf2, &g.probeMem2);
+    if (g.probeCount > 0)
+    {
+        UploadAddressBuffer(rec.data(), (VkDeviceSize)rec.size() * sizeof(float),
+                            &g.probeBuf, &g.probeMem);
+        UploadAddressBuffer(rec.data(), (VkDeviceSize)rec.size() * sizeof(float),
+                            &g.probeBuf2, &g.probeMem2);
+    }
 
-    // Per-triangle subsector id (step 4c): the megakernel + the multi-bounce bake
-    // index it by primitive id to find a hit's room probe. uint32 per triangle.
+    // Per-triangle subsector id (step 4c): the megakernel indexes it by primitive id to
+    // find a hit's subsector, and from that its sector for the REJECT cull. uint32 per
+    // triangle.
     UploadAddressBuffer(g.levelMesh->tri_ss,
                         (VkDeviceSize)g.levelMesh->numtris * sizeof(int),
                         &g.triSsBuf, &g.triSsMem);
@@ -9655,18 +9704,13 @@ void BuildProbes()
         fflush(stdout);
     }
 
-    // 4b-i verification: probe count + the spatial bounds of the placed probes
-    // (should sit inside the map's coordinate extent — a sanity check on placement).
-    float lo[3] = {  1e30f,  1e30f,  1e30f };
-    float hi[3] = { -1e30f, -1e30f, -1e30f };
-    for (int i = 0; i < got; i++)
+    // 4b-i verification: the lattice and its probe count.
     {
-        const float* p = &rec[(size_t)i * PROBE_FLOATS];
-        for (int k = 0; k < 3; k++) { lo[k] = std::min(lo[k], p[k]); hi[k] = std::max(hi[k], p[k]); }
+        const lgrid::ProbeLattice& L = g.probeLattice;
+        printf("RB_Vulkan: %u GI probes on a %dx%dx%d lattice (%.0f x %.0f units, from z %.0f).\n",
+               g.probeCount, L.nx, L.ny, L.nz, L.cell, L.dz, L.oz);
+        fflush(stdout);
     }
-    printf("RB_Vulkan: %u GI probes (1/subsector). bounds x[%.0f,%.0f] y[%.0f,%.0f] z[%.0f,%.0f]\n",
-           g.probeCount, lo[0], hi[0], lo[1], hi[1], lo[2], hi[2]);
-    fflush(stdout);
 
     // Build step 4b-ii: bake the indirect irradiance into the probes now that the
     // positions are uploaded (and the TLAS / emitter / Le buffers are ready).

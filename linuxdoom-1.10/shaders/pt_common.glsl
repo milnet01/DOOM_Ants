@@ -433,7 +433,7 @@ layout(buffer_reference, scalar) readonly buffer Verts    { float v[]; };
 layout(buffer_reference, scalar) readonly buffer Emitters { float e[]; };
 layout(buffer_reference, scalar) readonly buffer MatEmis  { float m[]; };
 
-// GI probe cache (build step 4c), read side: ProbesRO, TriSs and giIrradiance live in
+// GI probe cache (build step 4c), read side: ProbesRO, TriSs and giIrradianceAt live in
 // formulas/gi_probe.glsl, shared with the raster tier (DOOM-0440). Both the camera frame
 // and the multi-bounce bake read these.
 #include "formulas/gi_probe.glsl"

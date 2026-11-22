@@ -21230,6 +21230,19 @@ in CLAUDE.md describes.
   through walls stops. E1M1's start room is lit by one light inside a
   recess, so its side walls go dark (bounce returns in B3). For the user
   to judge. Kit: d0652/ab.sh, door.sh, perf.sh.
+  B3 built 2026-11-22: the bounce light's probes stand on a 3D lattice
+  (seep cells in xy, 128 units in z, at most 8 layers); a layer within
+  one spacing of a low room's air moves into it. The bake seeds by ray
+  index, stores each probe's reach along six axes, and marks a probe
+  inside solid map invalid. mesh.frag, pathtrace.comp and the bake's
+  bounces blend 8 corners by world position (giIrradianceAt), dropping
+  corners behind a wall. Captures (d0652/ab.sh, B2 vs B3): the straight
+  floor edges at both spec spots are gone, with -lightlab 0 and with
+  lights on; the start room matches in both views. All 68 IWAD maps load
+  and bake, no non-finite values. For B4: bake 0.66 s on E1M1, 4.4 s on
+  MAP24 (41671 probes), 2.1 s MAP15. Scene pass, Solid rasterised, 100 %,
+  quiet machine, B2 -> B3: E1M1 0.47 -> 1.16 ms, E1M4 1.22 -> 2.08,
+  E3M6 4.06 -> 5.08, MAP28 1.96 -> 2.90.
   **Layman:** The smooth view lights the map in invisible patches, and the light jumps where two patches meet, drawing straight lines on floors.
   Kind: fix.
   Source: user-2026-11-21.

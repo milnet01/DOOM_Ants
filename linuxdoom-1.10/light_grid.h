@@ -408,6 +408,113 @@ inline bool PolarBoxMaySee(const float* map, float lx, float ly, float cx, float
     return false;
 }
 
+// ---------------------------------------------------------------------------------------
+// B3 (spec 4.5): the bounce light's probes on a 3D lattice, blended trilinearly.
+//
+// The probe buffer, which the bake writes and gi_probe.glsl's giIrradianceAt reads, is
+// floats end to end:
+//   header  PROBE_HDR floats: origin x, y, z, cell (xy spacing), dz, nx, ny, nz
+//   index   nx * ny * nz floats, x fastest: the point's record number, or -1 if none
+//   records PROBE_REC floats each: pos[3], valid, SH-L1 radiance R[4] G[4] B[4],
+//           reach +x -x +y -y +z -z, two pad
+// The index holds float values, not bit patterns, so no read can mistake one for a NaN.
+// "valid" is the bake's verdict: 0 when the point turned out to sit inside solid map.
+
+// Layer spacing (world units), doubled until the layers fit RB_PROBE_MAXLAYERS.
+static const float RB_PROBE_DZ        = 128.0f;
+static const int   RB_PROBE_MAXLAYERS = 8;
+// A point is looked up this far off its surface along its normal, so a floor reads the air
+// above it. MUST equal gi_probe.glsl's GI_PROBE_NBIAS (shader_mirror_test.cpp).
+static const float RB_PROBE_NBIAS     = 8.0f;
+// A corner's reach may fall this short of the point and still count (UT_Ants'
+// PROBE_SIGHT_SLACK). MUST equal gi_probe.glsl's GI_PROBE_SLACK.
+static const float RB_PROBE_SLACK     = 8.0f;
+// How far inside a column's air a moved point sits (spec 4.5).
+static const float RB_PROBE_MARGIN    = 8.0f;
+static const uint32_t PROBE_HDR = 8;    // MUST equal gi_probe.glsl's GI_PROBE_HDR
+static const uint32_t PROBE_REC = 24;   // MUST equal gi_probe.glsl's GI_PROBE_REC
+
+struct ProbeLattice { float ox, oy, oz, cell, dz; int nx, ny, nz; };
+
+// The lattice over the seep field's cells (centres at ox + i * cell) and the z span
+// [zmin, zmax]: layers dz apart from zmin + dz / 2, dz doubled until they fit.
+inline ProbeLattice MakeProbeLattice(float ox, float oy, float cell, int nx, int ny,
+                                     float zmin, float zmax)
+{
+    ProbeLattice L = { ox, oy, 0.0f, cell, RB_PROBE_DZ, nx, ny, 1 };
+    const float span = std::max(zmax - zmin, 1.0f);
+    while ((int)std::ceil(span / L.dz) > RB_PROBE_MAXLAYERS)
+        L.dz *= 2.0f;
+    L.nz = std::max((int)std::ceil(span / L.dz), 1);
+    L.oz = zmin + 0.5f * L.dz;
+    return L;
+}
+
+inline size_t ProbeIndexCount(const ProbeLattice& L) { return (size_t)L.nx * L.ny * L.nz; }
+inline size_t ProbeRecBase(const ProbeLattice& L)    { return PROBE_HDR + ProbeIndexCount(L); }
+
+// Where layer z's probe stands in a column whose air is [f, c], or NAN if it has none.
+// A layer inside the air stays put; one less than a layer outside it moves in, so a room
+// lower than dz still gets probes at its floor and ceiling (spec 4.5).
+inline float ProbeLayerZ(float z, float dz, float f, float c)
+{
+    if (!(c > f))
+        return NAN;
+    const float m  = std::min(RB_PROBE_MARGIN, 0.5f * (c - f));
+    const float lo = f + m, hi = c - m;
+    if (z < lo - dz || z > hi + dz)
+        return NAN;
+    return std::min(std::max(z, lo), hi);
+}
+
+// The 12 SH-L1 coefficients blended at world point p (already offset along its normal)
+// from the 8 corners around it: a corner without a valid probe is dropped, and so is one
+// whose reach falls short of p; the weight left is renormalised. If every present corner
+// falls short, they are blended unmasked rather than giving black (UT_Ants' indirectAt).
+// Returns false with sh zeroed when no corner has a probe. gi_probe.glsl's
+// giIrradianceAt is the copy that runs; this one is what the tests read.
+inline bool ProbeBlendSH(const float* buf, float px, float py, float pz, float sh[12])
+{
+    for (int k = 0; k < 12; k++) sh[k] = 0.0f;
+    const ProbeLattice L = { buf[0], buf[1], buf[2], buf[3], buf[4],
+                             (int)buf[5], (int)buf[6], (int)buf[7] };
+    const size_t rec0 = ProbeRecBase(L);
+    const float cx = (px - L.ox) / L.cell, cy = (py - L.oy) / L.cell, cz = (pz - L.oz) / L.dz;
+    const float bx = std::floor(cx), by = std::floor(cy), bz = std::floor(cz);
+    const float f[3] = { cx - bx, cy - by, cz - bz };
+    float sum[12] = {}, all[12] = {};
+    float wSum = 0.0f, wAll = 0.0f;
+    for (int corner = 0; corner < 8; corner++)
+    {
+        const int o[3] = { corner & 1, (corner >> 1) & 1, (corner >> 2) & 1 };
+        const int ix = (int)bx + o[0], iy = (int)by + o[1], iz = (int)bz + o[2];
+        if (ix < 0 || iy < 0 || iz < 0 || ix >= L.nx || iy >= L.ny || iz >= L.nz)
+            continue;
+        const float idx = buf[PROBE_HDR + ((size_t)iz * L.ny + iy) * L.nx + ix];
+        if (idx < 0.0f)
+            continue;
+        const float* r = buf + rec0 + (size_t)idx * PROBE_REC;
+        if (r[3] == 0.0f)
+            continue;
+        float w = 1.0f;
+        for (int a = 0; a < 3; a++) w *= o[a] ? f[a] : 1.0f - f[a];
+        const float d[3] = { px - r[0], py - r[1], pz - r[2] };
+        bool reaches = true;
+        for (int a = 0; a < 3; a++)
+            if (std::fabs(d[a]) > (d[a] >= 0.0f ? r[16 + 2 * a] : r[17 + 2 * a]) + RB_PROBE_SLACK)
+                reaches = false;
+        for (int k = 0; k < 12; k++) all[k] += w * r[4 + k];
+        wAll += w;
+        if (!reaches)
+            continue;
+        for (int k = 0; k < 12; k++) sum[k] += w * r[4 + k];
+        wSum += w;
+    }
+    if (wSum > 0.0f)      for (int k = 0; k < 12; k++) sh[k] = sum[k] / wSum;
+    else if (wAll > 0.0f) for (int k = 0; k < 12; k++) sh[k] = all[k] / wAll;
+    return wAll > 0.0f;
+}
+
 }  // namespace lgrid
 
 #endif

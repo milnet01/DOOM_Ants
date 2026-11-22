@@ -375,6 +375,12 @@ const unsigned char* RB_RejectMatrix(int* sizeBytes);
 // Thing) with its room for the REJECT cull.
 int RB_SectorAtPoint(float x, float y);
 
+// The floor and ceiling heights (world units) of the sector RB_SectorAtPoint finds at
+// (x, y); returns that sector, or -1 with both left unset. A point in solid map still
+// finds a neighbouring sector, so the caller cannot treat a hit as "in the air". Places
+// the GI probe lattice (DOOM-0652 B3).
+int RB_SectorPlanesAtPoint(float x, float y, float* floorz, float* ceilz);
+
 // Owning sector index of each subsector, written into out[] in subsector order
 // (matching RB_BuildProbes / the mesh tri_ss map), up to n entries; returns the
 // count. -1 for a degenerate (line-less) leaf. Lets a ray hit -> subsector ->

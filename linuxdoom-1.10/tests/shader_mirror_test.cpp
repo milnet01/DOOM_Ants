@@ -183,6 +183,16 @@ int main()
     same(ms, "RASTER_POLAR_BINS",  lg, "RASTER_POLAR_BINS");
     same(ms, "RASTER_POLAR_NBIAS", lg, "RASTER_POLAR_NBIAS");
     same(ms, "RASTER_POLAR_SOFT",  lg, "RASTER_POLAR_SOFT");
+    // DOOM-0652 B3: the probe lattice's buffer layout and its two distances, which
+    // light_grid.h's ProbeBlendSH and gi_probe.glsl's giIrradianceAt both use.
+    {
+        const std::string gp = slurp(DOOM_TESTS_ROOT "/shaders/formulas/gi_probe.glsl");
+        check(!gp.empty(), "gi_probe.glsl is readable");
+        same(gp, "GI_PROBE_HDR",   lg, "PROBE_HDR");
+        same(gp, "GI_PROBE_REC",   lg, "PROBE_REC");
+        same(gp, "GI_PROBE_NBIAS", lg, "RB_PROBE_NBIAS");
+        same(gp, "GI_PROBE_SLACK", lg, "RB_PROBE_SLACK");
+    }
     {
         const size_t at = vk.find("RG_ORIGIN_X, RG_ORIGIN_Y");
         check(at != std::string::npos, "r_vulkan.cpp still declares the RG_* header enum");

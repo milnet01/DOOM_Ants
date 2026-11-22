@@ -56,7 +56,7 @@ layout(location = 1) out vec4 outDirect;
 
 // DOOM-0170 L1a — baked GI probes, read in the RASTER (RT-off) path so rooms get
 // the same soft coloured indirect bounce the path tracer bakes. The buffer layout and
-// giIrradiance are the path tracer's own, from the shared header (DOOM-0440).
+// giIrradianceAt are the path tracer's own, from the shared header (DOOM-0440).
 #include "formulas/gi_probe.glsl"
 #include "formulas/fixed_colormap.glsl"   // DOOM-0455: invulnerability + visor
 
@@ -88,10 +88,10 @@ layout(push_constant) uniform Push {
     // DOOM-0170 L1a/L1b: baked SH-L1 GI probes + per-subsector point lights read in
     // raster (RT-off). 64-bit device addresses (8-byte aligned; byte offset 96/104/112,
     // probeCount at 120) keep the block under the 128 B guaranteed floor.
-    ProbesRO probes;    // baked per-subsector SH-L1 radiance (0 if no bake)
-    TriSs    triSs;      // per-triangle primitive id -> subsector/probe index
-    LightsRO lights;     // DOOM-0170 L1b: per-subsector nearest-N point lights
-    uint     probeCount; // subsector/probe count; bounds triSs+lights, 0 disables both
+    ProbesRO probes;    // baked SH-L1 probe lattice (DOOM-0652 B3; 0 if no bake)
+    TriSs    triSs;      // unused here since DOOM-0652 B3; the push block keeps its shape
+    LightsRO lights;     // DOOM-0652: the light grid
+    uint     probeCount; // probes on the lattice; 0 disables the bounce and the lights
     // DOOM-0455: RB_FIXED_* (formulas/fixed_colormap.glsl) at offset 124. The block is
     // now 128 B, the guaranteed floor, so it is full: the next field needs a buffer.
     uint     fixedMode;
@@ -603,19 +603,17 @@ void main()
 #endif
     }
 
-    // DOOM-0170 L1a/L1b: baked indirect bounce (AMBIENT) + this subsector's nearest point
-    // lights (DIRECT), on world surfaces (RT-off). The fragment's subsector =
-    // triSs[gl_PrimitiveID] (the same triangle->subsector map the path tracer indexes by
-    // primitive id). Flag test first so sprites/psprite/sky short-circuit before reading
-    // probeCount. Off when probeCount==0 (non-RT GPU or no bake) -> the plain sector-lit look.
+    // DOOM-0170 L1a/L1b: baked indirect bounce (AMBIENT) + the light grid's point lights
+    // (DIRECT), on world surfaces (RT-off). Both are found by world position (DOOM-0652),
+    // so neither changes at a BSP split. Flag test first so sprites/psprite/sky
+    // short-circuit before reading probeCount. Off when probeCount==0 (non-RT GPU or no
+    // bake) -> the plain sector-lit look.
     if ((vFlags & (FLAG_SPRITE | FLAG_PSPRITE | FLAG_SKY | FLAG_SKYDOME)) == 0 &&
         pc.probeCount > 0u)
     {
-        uint sub = pc.triSs.s[uint(gl_PrimitiveID)];
-        if (sub < pc.probeCount)
         {
             vec3 nrm = normalize(vNormal);
-            ambient += GI_BOUNCE_STRENGTH * albedo * giIrradiance(pc.probes, sub, nrm);
+            ambient += GI_BOUNCE_STRENGTH * albedo * giIrradianceAt(pc.probes, vWorldPos, nrm);
 
             // DOOM-0652: direct light from every light whose range reaches this
             // fragment's cell of the light grid. Each is a point stand-in for a cluster of

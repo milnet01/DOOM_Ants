@@ -11,7 +11,7 @@
 //          lights added on top of them each frame.
 //   INV-4  A wall blocks a lamp's light along the wall's own line (the polar wall map),
 //          and the cell cull built on the map never drops a light that reaches the cell.
-// INV-6 joins this file with B3.
+//   INV-6  A probe on the far side of a wall adds nothing to a point (the lattice blend).
 //
 // Build/run: `make test` (from linuxdoom-1.10/). No WAD, no GPU, no display.
 #include <cmath>
@@ -241,6 +241,65 @@ int main()
         }
         check(kept, "a culled cell holds no point the light reaches");
         check(culledSome, "and the cull does cull");
+    }
+
+    // INV-6: a probe on the far side of a wall adds nothing to a point. A 2x2x2 lattice,
+    // 64 units apart, with a wall at x = 56: the x = 64 corners stand 8 units behind it
+    // and hold bright SH; the x = 0 corners hold dim SH of their own.
+    {
+        const ProbeLattice L = { 0.0f, 0.0f, 0.0f, 64.0f, 64.0f, 2, 2, 2 };
+        auto lattice = [&](bool farPresent, float farReachMinusX, float nearReachX = 56.0f) {
+            std::vector<float> buf(ProbeRecBase(L) + 8 * PROBE_REC, 0.0f);
+            const float hdr[PROBE_HDR] = { L.ox, L.oy, L.oz, L.cell, L.dz, 2, 2, 2 };
+            std::copy(hdr, hdr + PROBE_HDR, buf.begin());
+            for (int k = 0; k < 8; k++)
+            {
+                const int ix = k & 1, iy = (k >> 1) & 1, iz = (k >> 2) & 1;
+                buf[PROBE_HDR + k] = (ix == 1 && !farPresent) ? -1.0f : (float)k;
+                float* r = &buf[ProbeRecBase(L) + (size_t)k * PROBE_REC];
+                r[0] = ix * 64.0f; r[1] = iy * 64.0f; r[2] = iz * 64.0f; r[3] = 1.0f;
+                for (int c = 0; c < 12; c++) r[4 + c] = ix ? 50.0f : 1.0f + 0.1f * (float)(k + c);
+                for (int a = 0; a < 6; a++) r[16 + a] = 1000.0f;
+                if (ix == 0) r[16] = nearReachX;            // +x: the wall
+                else         r[17] = farReachMinusX;         // -x: the wall, from behind
+            }
+            return buf;
+        };
+        const float px = 40.0f, py = 20.0f, pz = 30.0f;
+        float shWall[12], shNear[12], shOpen[12];
+        const bool any1 = ProbeBlendSH(lattice(true, 8.0f).data(),     px, py, pz, shWall);
+        const bool any2 = ProbeBlendSH(lattice(false, 8.0f).data(),    px, py, pz, shNear);
+        ProbeBlendSH(lattice(true, 1000.0f).data(), px, py, pz, shOpen);
+        bool same = any1 && any2, differs = false;
+        for (int c = 0; c < 12; c++)
+        {
+            same    = same && std::fabs(shWall[c] - shNear[c]) < 1e-5f;
+            differs = differs || std::fabs(shOpen[c] - shNear[c]) > 1.0f;
+        }
+        check(same,    "INV-6: the blend beside a wall equals the near corners' blend alone");
+        check(differs, "INV-6: and with no wall the far corners do change it");
+
+        // Every corner short of the point (near walls at x = 20 and x = 56): blend them
+        // unmasked rather than go black.
+        float shShort[12];
+        const bool any3 = ProbeBlendSH(lattice(true, 8.0f, 20.0f).data(), px, py, pz, shShort);
+        check(any3 && shShort[0] > 0.0f, "INV-6: a point every corner falls short of is not black");
+        float shNone[12];
+        check(!ProbeBlendSH(lattice(true, 8.0f).data(), -500.0f, py, pz, shNone) && shNone[0] == 0.0f,
+              "INV-6: a point with no corner present reads zero");
+    }
+
+    // Spec 4.5: placement. A layer inside a column's air stays; one less than a layer
+    // outside moves in, so a room lower than dz still gets probes; a far one gets none.
+    {
+        check(ProbeLayerZ(32.0f, 64.0f, 0.0f, 128.0f) == 32.0f, "a layer inside the air stays put");
+        check(ProbeLayerZ(-20.0f, 64.0f, 0.0f, 40.0f) == RB_PROBE_MARGIN, "a layer below a low room moves to its floor");
+        check(ProbeLayerZ(90.0f, 64.0f, 0.0f, 40.0f) == 40.0f - RB_PROBE_MARGIN, "a layer above it moves to its ceiling");
+        check(std::isnan(ProbeLayerZ(200.0f, 64.0f, 0.0f, 40.0f)), "a layer more than dz away gets none");
+        check(std::isnan(ProbeLayerZ(0.0f, 64.0f, 72.0f, 72.0f)), "a shut door has no air");
+        const ProbeLattice big = MakeProbeLattice(0, 0, 64, 4, 4, -1000.0f, 3000.0f);
+        check(big.nz <= RB_PROBE_MAXLAYERS && big.oz + (big.nz - 0.5f) * big.dz >= 3000.0f,
+              "the layers fit the cap and still span the map's height");
     }
 
     return check_summary("light_grid_test");
