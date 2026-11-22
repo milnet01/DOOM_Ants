@@ -45,8 +45,9 @@ layout(push_constant) uniform PC {
     MatEmis  matEmis;  // per-material Le table
     Probes   probes;   // GI probe buffer (this pass's output)
     ProbesRO prevProbes; // previous bounce pass's probes (read for multi-bounce)
-    Probes   direct;    // DOOM-0652 B4: 12 SH floats per probe, the first pass's direct
-                        // light; passes 2+ add it back instead of re-tracing it
+    Probes   direct;    // DOOM-0652 B4: 12 SH floats per probe, everything pass 1 gathers
+                        // except bounce light (direct light and sky fill); passes 2+
+                        // add it back instead of re-tracing it
     EmitSec  emitSec;  // DOOM-0119: unused here (always 0) — the bake's omni loop is
     Reject   reject;   // empty (omniStart == emitCount), so shadeSurface's REJECT cull
                        // is dead; passed only to satisfy the shared signature.

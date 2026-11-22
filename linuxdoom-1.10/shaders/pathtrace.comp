@@ -1480,6 +1480,8 @@ vec3 primaryHitAddTerms(vec3 L, PrimaryHit h, PrimaryLight s, vec3 n, float secL
     // DOOM-0630: the room's light through the same horror curve as the rasterised view.
     vec3 ambient = vec3(max(horrorSectorShade(secLight) * AMBIENT_SECTOR_SCALE, AMBIENT_FLOOR));
     if (sourcedLightOnly()) ambient = vec3(0.0);   // DOOM-0642: the bounce alone
+    // subId is the unknown id for sprites and when no bake ran (see the read above);
+    // the lookup itself goes by position.
     vec3 gi      = (s.subId != 0xFFFFFFFFu) ? giIrradianceAt(pc.probes, h.hitP, s.shadeN)
                                             : vec3(0.0);
     L += modAlbedo * max(gi, ambient) * h.ao;   // AO dims fill light only

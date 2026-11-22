@@ -21292,6 +21292,16 @@ in CLAUDE.md describes.
   open rooms. (4) A probe moved off its lattice point: draw its map from
   the moved position, and either weight by that position or state in the
   spec that the trilinear weight error is accepted.
+  UT_Ants review of c5f339f..919979e (2026-11-22): no bug;
+  giIrradianceAt and lgrid::ProbeBlendSH agree; bounce reuse holds. Four
+  stale comments fixed. For B5: (a) UTA-0185 — probe columns sit on the
+  cell grid, so a probe a few units inside a wall on that grid may stay
+  valid and dark; check on a real map, and consider a half-spacing
+  lookup offset. (b) Cheaper 8-corner read, unmeasured: scalar loads
+  when subgroupAllEqual(cell); pad rec0 to 16 bytes and read vec4s; fp16
+  SH and reach. Avoid a filtered 3D texture (drops the reach mask) and
+  L0-only SH. (c) The C/GLSL blend parity check is DOOM-0655; B4's
+  two-pass GLSL rewrite has no C counterpart test yet.
   **Layman:** The smooth view lights the map in invisible patches, and the light jumps where two patches meet, drawing straight lines on floors.
   Kind: fix.
   Source: user-2026-11-21.

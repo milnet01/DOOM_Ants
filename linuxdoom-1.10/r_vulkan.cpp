@@ -9145,8 +9145,9 @@ static void RecordHostReadBarrier(VkCommandBuffer cb, VkPipelineStageFlags srcSt
 // to verify the bake produced finite, non-zero values. Called at the tail of
 // BuildProbes (positions uploaded, SH zeroed). Needs the per-level TLAS + the
 // materials/emitter/Le buffers, so it runs after BuildAccelerationStructures and
-// BuildEmitterList. The probe buffer is host-visible + coherent; the last bounce's
-// host-read barrier makes its writes visible to the map once that dispatch is waited on.
+// BuildEmitterList. The probe buffer lives in the card's memory; the last pass copies it
+// into a host-cached read buffer, whose host-read barrier makes the copy visible to the
+// map once that dispatch is waited on.
 void RunGiBake()
 {
     if (!g.rtEnabled || g.probeBuf == VK_NULL_HANDLE || g.probeCount == 0 ||
@@ -9202,8 +9203,8 @@ void RunGiBake()
     // pass feeds the previous pass's probes back in (giEnabled) for one more bounce.
     // Ping-pong probeBuf <-> probeBuf2 (read prev, write current); start so the FINAL
     // bounce lands in probeBuf (the buffer the megakernel reads): for an odd bounce
-    // count that means starting the write on probeBuf. Per-frame cost is unchanged
-    // (still one probe lookup); only this one-time bake does the extra passes.
+    // count that means starting the write on probeBuf. Per-frame cost does not depend on
+    // the bounce count (one 8-corner blend); only this one-time bake does the extra passes.
     const int      BOUNCES = 3;
     static_assert(BOUNCES == 3, "the bake-done line prints three pass times");
     VkBuffer       wbuf = (BOUNCES & 1) ? g.probeBuf : g.probeBuf2;
