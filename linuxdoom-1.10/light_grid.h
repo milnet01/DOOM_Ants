@@ -17,6 +17,8 @@
 #include <utility>
 #include <vector>
 
+#include "seep_dist.h"   // RB_SeepPointSegDist (B2's wall range test)
+
 namespace lgrid {
 
 // The half-bright distance of a raster light (world units). MUST equal mesh.frag's
@@ -251,6 +253,159 @@ inline ListStats BuildDynLists(const Grid& g, const Light2D* L, int n,
 inline void ClearDynLists(std::vector<uint32_t>& cells, const std::vector<uint32_t>& touched)
 {
     for (uint32_t c : touched) { cells[2 * c] = 0; cells[2 * c + 1] = 0; }
+}
+
+// ---------------------------------------------------------------------------------------
+// DOOM-0652 B2 (spec 4.4): the polar wall map. Each light keeps, for each of
+// RASTER_POLAR_BINS directions round it, the 2D distance to the nearest wall that blocks
+// it. A fragment is lit by the light when it is nearer than the wall in its direction.
+// The direction is a "diamond angle" -- monotonic in the true angle and free of
+// trigonometry -- scaled to bins. mesh.frag computes the same coordinate and samples the
+// map the same way; shader_mirror_test.cpp holds the constants equal.
+// ---------------------------------------------------------------------------------------
+
+// Directions per light: a bin is about 12 units wide at the 512-unit range cap. MUST
+// equal mesh.frag's RASTER_POLAR_BINS.
+static const uint32_t RASTER_POLAR_BINS  = 256;
+// A fragment is tested this far off its own surface along its geometric normal, so a wall
+// facing the light is not shadowed by itself. A floor's normal has no 2D part, so floor
+// light still stops at the wall's foot. MUST equal mesh.frag's.
+static const float    RASTER_POLAR_NBIAS = 4.0f;
+// The shadow fades over this many units past the wall. MUST equal mesh.frag's.
+static const float    RASTER_POLAR_SOFT  = 4.0f;
+
+// What a linedef does to light, in 2D. RB_LightWalls (r_lightwall.c) fills these.
+enum : uint32_t {
+    LW_OPEN     = 0,   // two-sided with an opening: light passes (spec 10)
+    LW_ONESIDED = 1,   // one-sided: blocks light reaching its front, right of (x1,y1)->(x2,y2)
+    LW_CLOSED   = 2,   // two-sided with no opening, as a shut door: blocks from both sides
+};
+struct Wall2D { float x1, y1, x2, y2; uint32_t kind; };
+
+// The diamond angle of (dx, dy) in bins, [0, RASTER_POLAR_BINS).
+inline float PolarCoord(float dx, float dy)
+{
+    const float s = std::fabs(dx) + std::fabs(dy);
+    if (!(s > 0.0f)) return 0.0f;
+    float p;
+    if (dy >= 0.0f) p = dx >= 0.0f ? dy / s : 1.0f - dx / s;
+    else            p = dx <  0.0f ? 2.0f - dy / s : 3.0f + dx / s;
+    p *= (float)RASTER_POLAR_BINS * 0.25f;
+    return p >= (float)RASTER_POLAR_BINS ? p - (float)RASTER_POLAR_BINS : p;
+}
+
+// The direction of polar coordinate p (bins), with |dx| + |dy| = 1.
+inline void PolarDir(float p, float& dx, float& dy)
+{
+    float q = p * (4.0f / (float)RASTER_POLAR_BINS);
+    q -= 4.0f * std::floor(q * 0.25f);
+    const int   quad = std::min((int)q, 3);
+    const float t    = q - (float)quad;
+    switch (quad)
+    {
+        case 0:  dx = 1.0f - t; dy = t;        break;
+        case 1:  dx = -t;       dy = 1.0f - t; break;
+        case 2:  dx = t - 1.0f; dy = -t;       break;
+        default: dx = t;        dy = t - 1.0f; break;
+    }
+}
+
+// Fill out[RASTER_POLAR_BINS] for a light at (lx, ly) with range R, from walls[cand[k]]
+// for k < n. A bin with no blocking wall in range holds R, so the distance a fragment
+// interpolates never jumps to infinity at a wall's end. A bin holds the wall distance
+// along its centre ray, with the ray clamped to the wall's own angular span, so a wall
+// narrower than a bin still blocks the bin it falls in.
+//
+// A one-sided wall blocks only light that reaches its front. A light behind one is inside
+// solid map (a cluster centre that fell inside a pillar), and lighting the room round the
+// pillar beats lighting nothing. In a closed map, the first one-sided wall any ray from
+// open air meets is met from the front, so this skips no real occluder.
+inline void BuildPolarMap(float lx, float ly, float R, const Wall2D* walls,
+                          const uint32_t* cand, int n, float* out)
+{
+    const int B = (int)RASTER_POLAR_BINS;
+    for (int b = 0; b < B; b++) out[b] = R;
+    for (int k = 0; k < n; k++)
+    {
+        const Wall2D& w = walls[cand[k]];
+        if (w.kind == LW_OPEN) continue;
+        const float ax = w.x1 - lx, ay = w.y1 - ly, bx = w.x2 - lx, by = w.y2 - ly;
+        // cross(a, b) < 0: b is clockwise of a, which puts the light on the line's right,
+        // its front.
+        const float cr = ax * by - ay * bx;
+        if (cr == 0.0f) continue;                    // a line through the light hides no angle
+        if (w.kind == LW_ONESIDED && cr > 0.0f) continue;
+        if (RB_SeepPointSegDist(lx, ly, w.x1, w.y1, w.x2, w.y2) >= R) continue;
+        // Sweep counter-clockwise from s to e.
+        const float sx = cr > 0.0f ? ax : bx, sy = cr > 0.0f ? ay : by;
+        const float ex = cr > 0.0f ? bx : ax, ey = cr > 0.0f ? by : ay;
+        const float ps = PolarCoord(sx, sy);
+        float       pe = PolarCoord(ex, ey);
+        if (pe < ps) pe += (float)B;
+        const float wx = ex - sx, wy = ey - sy;
+        for (int bb = (int)std::floor(ps); bb <= (int)std::floor(pe); bb++)
+        {
+            float dx, dy;
+            PolarDir(std::min(std::max((float)bb + 0.5f, ps), pe), dx, dy);
+            // The ray t * d meets s + u * w at t = cross(s, w) / cross(d, w).
+            const float den = dx * wy - dy * wx;
+            if (den == 0.0f) continue;
+            const float t = (sx * wy - sy * wx) / den;
+            if (!(t > 0.0f)) continue;
+            float& o = out[bb % B];
+            o = std::min(o, t * std::sqrt(dx * dx + dy * dy));
+        }
+    }
+}
+
+// How lit the point (dx, dy) from the light is, in [0, 1]: the wall distance linearly
+// interpolated between the two nearest bin centres, then a step RASTER_POLAR_SOFT wide
+// past it. The distance is interpolated rather than the test, so a lit wall stays lit:
+// the distance to a straight wall is convex in the angle, and the chord never falls short
+// of it. mesh.frag's copy is the one that runs; this one is what the tests read.
+inline float PolarLit(const float* map, float dx, float dy)
+{
+    const int   B  = (int)RASTER_POLAR_BINS;
+    const float p  = PolarCoord(dx, dy) - 0.5f;
+    const float fl = std::floor(p);
+    const int   i0 = ((int)fl + B) % B, i1 = (i0 + 1) % B;
+    const float wall = map[i0] + (map[i1] - map[i0]) * (p - fl);
+    const float d    = std::sqrt(dx * dx + dy * dy);
+    return std::min(std::max((wall - d) / RASTER_POLAR_SOFT + 1.0f, 0.0f), 1.0f);
+}
+
+// Can any point of the box (cx +- hc, cy +- hc), grown by the normal offset, be lit by the
+// light at (lx, ly)? Conservative: the most open bin any point of the box's angular span
+// interpolates from, against the box's nearest point. The cell lists
+// use it in place of the B1 REJECT cull, so a light shut behind a wall costs a cell nothing.
+inline bool PolarBoxMaySee(const float* map, float lx, float ly, float cx, float cy, float hc)
+{
+    const float h  = hc + RASTER_POLAR_NBIAS + 1.0f;
+    const float x0 = cx - h - lx, x1 = cx + h - lx, y0 = cy - h - ly, y1 = cy + h - ly;
+    if (x0 <= 0.0f && x1 >= 0.0f && y0 <= 0.0f && y1 >= 0.0f)
+        return true;                                 // the light is in the box
+    const float nx = std::max(std::max(x0, -x1), 0.0f), ny = std::max(std::max(y0, -y1), 0.0f);
+    const float near = std::sqrt(nx * nx + ny * ny);
+    const int   B  = (int)RASTER_POLAR_BINS;
+    // Seen from outside, a box spans under half a turn, so its corners' offsets from the
+    // direction of its centre bound its span.
+    const float pc = PolarCoord(0.5f * (x0 + x1), 0.5f * (y0 + y1));
+    float lo = 0.0f, hi = 0.0f;
+    const float xs[2] = { x0, x1 }, ys[2] = { y0, y1 };
+    for (float x : xs) for (float y : ys)
+    {
+        float o = PolarCoord(x, y) - pc;
+        if (o >  0.5f * B) o -= (float)B;
+        if (o < -0.5f * B) o += (float)B;
+        lo = std::min(lo, o); hi = std::max(hi, o);
+    }
+    // PolarLit at p reads bins floor(p - 0.5) and the one after, so these are every bin a
+    // point of the span reads.
+    const int b0 = (int)std::floor(pc + lo - 0.5f), b1 = (int)std::floor(pc + hi + 0.5f);
+    for (int b = b0; b <= b1; b++)
+        if (map[((b % B) + B) % B] + RASTER_POLAR_SOFT > near)
+            return true;
+    return false;
 }
 
 }  // namespace lgrid

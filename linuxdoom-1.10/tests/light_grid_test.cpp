@@ -9,7 +9,9 @@
 //   INV-3  A cell lists every light whose range reaches it, unless it overflowed, and
 //          each overflow is counted. Holds for the static lists and for the moving
 //          lights added on top of them each frame.
-// INV-4 and INV-6 join this file with B2 and B3.
+//   INV-4  A wall blocks a lamp's light along the wall's own line (the polar wall map),
+//          and the cell cull built on the map never drops a light that reaches the cell.
+// INV-6 joins this file with B3.
 //
 // Build/run: `make test` (from linuxdoom-1.10/). No WAD, no GPU, no display.
 #include <cmath>
@@ -143,6 +145,103 @@ int main()
     bool clear = true;
     for (uint32_t v : cells) clear = clear && v == 0;
     check(clear, "clearing the touched cells leaves the moving-light table zero");
+
+    // INV-4: a wall blocks a light along the wall's own line. A light at the origin, a
+    // one-sided wall at x = 100 from y = 50 down to y = -50, whose front (its right) faces
+    // the light.
+    {
+        const std::vector<Wall2D> W = { { 100.0f, 50.0f, 100.0f, -50.0f, LW_ONESIDED } };
+        const uint32_t all[1] = { 0 };
+        std::vector<float> m(RASTER_POLAR_BINS);
+        BuildPolarMap(0.0f, 0.0f, 400.0f, W.data(), all, 1, m.data());
+        check(PolarLit(m.data(), 150.0f, 0.0f) == 0.0f, "a point behind the wall reads blocked");
+        check(PolarLit(m.data(), 150.0f, 40.0f) == 0.0f, "so does one behind it near its end");
+        check(PolarLit(m.data(), 90.0f, 120.0f) == 1.0f,
+              "a point as far away, beside the wall's end, reads open");
+        check(PolarLit(m.data(), 60.0f, 0.0f) == 1.0f, "a point before the wall reads open");
+        // The wall's own lit face, tested RASTER_POLAR_NBIAS off it as mesh.frag does.
+        bool faceLit = true;
+        for (float y = -45.0f; y <= 45.0f; y += 1.0f)
+            faceLit = faceLit && PolarLit(m.data(), 100.0f - RASTER_POLAR_NBIAS, y) == 1.0f;
+        check(faceLit, "the wall's own face is not shadowed by the wall");
+
+        // Seen from behind, a one-sided wall is the inside of solid map and blocks nothing.
+        BuildPolarMap(200.0f, 0.0f, 400.0f, W.data(), all, 1, m.data());
+        check(PolarLit(m.data(), -150.0f, 0.0f) == 1.0f, "a one-sided wall does not block its back");
+
+        // A shut door blocks from both sides; an open one from neither.
+        std::vector<Wall2D> D2 = W;
+        D2[0].kind = LW_CLOSED;
+        BuildPolarMap(200.0f, 0.0f, 400.0f, D2.data(), all, 1, m.data());
+        check(PolarLit(m.data(), -150.0f, 0.0f) == 0.0f, "a shut door blocks from its back");
+        D2[0].kind = LW_OPEN;
+        BuildPolarMap(200.0f, 0.0f, 400.0f, D2.data(), all, 1, m.data());
+        check(PolarLit(m.data(), -150.0f, 0.0f) == 1.0f, "an open door blocks nothing");
+    }
+
+    // The polar coordinate and its inverse agree all the way round.
+    {
+        bool round = true;
+        for (int i = 0; i < 4096; i++)
+        {
+            const float p = (float)RASTER_POLAR_BINS * (float)i / 4096.0f;
+            float dx, dy;
+            PolarDir(p, dx, dy);
+            round = round && std::fabs(PolarCoord(dx, dy) - p) < 1e-3f;
+        }
+        check(round, "PolarCoord inverts PolarDir");
+    }
+
+    // The cell cull never drops a light that reaches a point of the cell. A room of
+    // random walls round a light; every point PolarLit lights must sit in a box
+    // PolarBoxMaySee keeps. Deterministic LCG, so a failure repeats.
+    {
+        uint32_t seed = 12345u;
+        auto rnd = [&seed](float lo, float hi) {
+            seed = seed * 1664525u + 1013904223u;
+            return lo + (hi - lo) * (float)(seed >> 8) / 16777216.0f;
+        };
+        bool kept = true, culledSome = false;
+        for (int trial = 0; trial < 200 && kept; trial++)
+        {
+            std::vector<Wall2D> W;
+            for (int k = 0; k < 12; k++)
+            {
+                const float x = rnd(-400.0f, 400.0f), y = rnd(-400.0f, 400.0f);
+                W.push_back({ x, y, x + rnd(-150.0f, 150.0f), y + rnd(-150.0f, 150.0f),
+                              k % 3 == 0 ? LW_CLOSED : LW_ONESIDED });
+            }
+            // A picket fence of shut doors with gaps narrower than a bin, so light reaches
+            // a culled-looking cell only through the edge of its span.
+            const float fx = rnd(100.0f, 250.0f), gap = rnd(1.0f, 6.0f);
+            for (float y = -400.0f; y < 400.0f; y += 24.0f + gap)
+                W.push_back({ fx, y, fx, y + 24.0f, LW_CLOSED });
+            std::vector<uint32_t> ids(W.size());
+            for (size_t k = 0; k < ids.size(); k++) ids[k] = (uint32_t)k;
+            const float lx = rnd(-50.0f, 50.0f), ly = rnd(-50.0f, 50.0f), R = 450.0f;
+            std::vector<float> m(RASTER_POLAR_BINS);
+            BuildPolarMap(lx, ly, R, W.data(), ids.data(), (int)ids.size(), m.data());
+            const float hc = 32.0f;
+            for (float cy = -480.0f; cy <= 480.0f && kept; cy += 64.0f)
+            for (float cx = -480.0f; cx <= 480.0f && kept; cx += 64.0f)
+            {
+                const bool may = PolarBoxMaySee(m.data(), lx, ly, cx, cy, hc);
+                culledSome = culledSome || !may;
+                if (may) continue;
+                // mesh.frag tests a fragment up to RASTER_POLAR_NBIAS off its cell.
+                const float ph = hc + RASTER_POLAR_NBIAS;
+                for (float py = cy - ph; py <= cy + ph && kept; py += 1.0f)
+                for (float px = cx - ph; px <= cx + ph && kept; px += 1.0f)
+                    if (PolarLit(m.data(), px - lx, py - ly) > 0.0f)
+                    {
+                        std::printf("  trial %d: (%.0f, %.0f) is lit in a culled cell\n", trial, px, py);
+                        kept = false;
+                    }
+            }
+        }
+        check(kept, "a culled cell holds no point the light reaches");
+        check(culledSome, "and the cull does cull");
+    }
 
     return check_summary("light_grid_test");
 }

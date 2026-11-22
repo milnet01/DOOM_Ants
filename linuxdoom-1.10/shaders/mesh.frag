@@ -68,8 +68,8 @@ layout(buffer_reference, scalar) readonly buffer LightsRO { uint u[]; };
 // Header words. MUST match r_vulkan.cpp's RG_* enum.
 const uint RG_ORIGIN_X = 0u, RG_ORIGIN_Y = 1u, RG_INV_CELL = 2u, RG_W = 3u, RG_H = 4u,
            RG_IDX = 5u, RG_STATIC_LIGHTS = 6u, RG_CELLS = 7u, RG_DYN_LIGHTS = 8u,
-           RG_DYN_CELLS = 9u, RG_DYN_IDX = 10u, RG_SUBSEC = 11u, RG_REJECT = 12u,
-           RG_NUM_SECTORS = 13u, RG_NUM_SUB = 14u, RG_ON = 15u;
+           RG_DYN_CELLS = 9u, RG_DYN_IDX = 10u, RG_STATIC_POLAR = 11u, RG_DYN_POLAR = 12u,
+           RG_ON = 13u;
 
 // Must match mesh.vert's block byte-for-byte (shared push-constant range). The
 // sky path reads pc.yaw to pan the panorama; numWall/numFlat give the material-id
@@ -194,9 +194,27 @@ const float GI_BOUNCE_STRENGTH = 1.0;
 // radiometric NEE value (sprite lamps carry a ×12 build boost) that summed as raw
 // intensity blows straight to white. STRENGTH sets the max additive level after the sum
 // is rolled off.
-const uint  RASTER_LIGHT_FLOATS  = 9u;    // words per light record (r_vulkan.cpp)
+const uint  RASTER_LIGHT_FLOATS  = 8u;    // words per light record (r_vulkan.cpp)
 const float RASTER_LIGHT_RADIUS  = 256.0; // DOOM-0630: lamps light pools, not whole rooms
 const float RASTER_INV_RADIUS2   = 1.0 / (RASTER_LIGHT_RADIUS * RASTER_LIGHT_RADIUS);
+// DOOM-0652 B2: each light's polar wall map (light_grid.h, whose PolarCoord and PolarLit
+// these copy). BINS directions round the light, each the 2D distance to the nearest wall
+// that blocks it. A fragment is tested NBIAS off its surface along its geometric normal,
+// and the shadow fades over SOFT units past the wall. All three MUST equal light_grid.h's.
+const uint  RASTER_POLAR_BINS    = 256u;
+const float RASTER_POLAR_NBIAS   = 4.0;
+const float RASTER_POLAR_SOFT    = 4.0;
+
+// The diamond angle of d in bins, [0, RASTER_POLAR_BINS): light_grid.h's PolarCoord.
+float polarCoord(vec2 d)
+{
+    float s = abs(d.x) + abs(d.y);
+    if (s <= 0.0) return 0.0;
+    float p = d.y >= 0.0 ? (d.x >= 0.0 ? d.y / s : 1.0 - d.x / s)
+                         : (d.x <  0.0 ? 2.0 - d.y / s : 3.0 + d.x / s);
+    p *= float(RASTER_POLAR_BINS) * 0.25;
+    return p >= float(RASTER_POLAR_BINS) ? p - float(RASTER_POLAR_BINS) : p;
+}
 // Two decoupled dials so "how obvious a single lamp is" and "the ceiling that stops a
 // cluster blowing to white" tune independently: GAIN sets how fast a light climbs to
 // full before the roll-off (the pop), STRENGTH is the max additive level after it.
@@ -604,8 +622,7 @@ void main()
             // NEE area lights (or one moving sprite's): its colour, a smooth inverse-square
             // falloff (half-bright at RADIUS) windowed to exactly zero at its range, and a
             // Lambert facing term. No cast shadows (that is the RT-on / key-light job,
-            // §4.4). Until DOOM-0652 B2, a light the fragment's sector cannot see by
-            // REJECT is skipped.
+            // §4.4); a light's polar wall map stops it at the walls between (B2).
             vec3 plight = vec3(0.0);
             vec3 ppool  = vec3(0.0);   // DOOM-0539/0551: pickup lights, see below
             vec3 plamp  = vec3(0.0);   // DOOM-0645: the pool close to a lamp, see below
@@ -625,18 +642,17 @@ void main()
                 uint  sFirst = L.u[sc], ns = L.u[sc + 1u];
                 uint  dc   = L.u[RG_DYN_CELLS] + 2u * cell;
                 uint  dFirst = L.u[dc], nd = L.u[dc + 1u];
-                uint  numSec = L.u[RG_NUM_SECTORS];
                 // The header words the loop needs, read once.
                 uint  sLights = L.u[RG_STATIC_LIGHTS], sIdx = L.u[RG_IDX] + sFirst;
                 uint  dLights = L.u[RG_DYN_LIGHTS],    dIdx = L.u[RG_DYN_IDX] + dFirst;
-                uint  rejAt   = L.u[RG_REJECT];
-                uint  mySec  = (numSec > 0u && sub < L.u[RG_NUM_SUB]) ? L.u[L.u[RG_SUBSEC] + sub]
-                                                                      : 0xFFFFFFFFu;
+                uint  sPolar  = L.u[RG_STATIC_POLAR],  dPolar = L.u[RG_DYN_POLAR];
+                // Where the walls are tested from: NBIAS off the surface, so a wall facing
+                // the light does not shadow itself; a floor's offset has no 2D part.
+                vec2  wallP = vWorldPos.xy + nrm.xy * RASTER_POLAR_NBIAS;
                 for (uint k = 0u; k < ns + nd; k++)
                 {
-                    uint o = k < ns
-                           ? sLights + L.u[sIdx + k] * RASTER_LIGHT_FLOATS
-                           : dLights + L.u[dIdx + (k - ns)] * RASTER_LIGHT_FLOATS;
+                    uint li = k < ns ? L.u[sIdx + k] : L.u[dIdx + (k - ns)];
+                    uint o  = (k < ns ? sLights : dLights) + li * RASTER_LIGHT_FLOATS;
                     // Position and range first: a light whose range ends short of this
                     // fragment adds nothing, so its other words are not read.
                     vec3  c     = vec3(uintBitsToFloat(L.u[o]), uintBitsToFloat(L.u[o + 1u]),
@@ -646,13 +662,20 @@ void main()
                     float d2  = dot(dd, dd);
                     if (d2 >= range * range)
                         continue;
-                    uint lsec = L.u[o + 8u];
-                    if (mySec < numSec && lsec < numSec)
-                    {
-                        uint bit = mySec * numSec + lsec;
-                        if (((L.u[rejAt + (bit >> 5u)] >> (bit & 31u)) & 1u) != 0u)
-                            continue;              // REJECT: this sector cannot see the light
-                    }
+                    // DOOM-0652 B2 (spec 4.4): the wall distance in this direction, linearly
+                    // interpolated between the two nearest bins (light_grid.h's PolarLit),
+                    // and a step SOFT wide past it.
+                    vec2  wq  = wallP - c.xy;
+                    float pb  = polarCoord(wq) - 0.5;
+                    float pf  = floor(pb);
+                    uint  pm  = (k < ns ? sPolar : dPolar) + li * RASTER_POLAR_BINS;
+                    uint  i0  = uint(int(pf) + int(RASTER_POLAR_BINS)) % RASTER_POLAR_BINS;
+                    float w0  = uintBitsToFloat(L.u[pm + i0]);
+                    float w1  = uintBitsToFloat(L.u[pm + (i0 + 1u) % RASTER_POLAR_BINS]);
+                    float vis = clamp((mix(w0, w1, pb - pf) - length(wq)) / RASTER_POLAR_SOFT + 1.0,
+                                      0.0, 1.0);
+                    if (vis <= 0.0)
+                        continue;                  // a wall stands between
                     vec3  col   = vec3(uintBitsToFloat(L.u[o + 4u]), uintBitsToFloat(L.u[o + 5u]),
                                        uintBitsToFloat(L.u[o + 6u]));
                     // DOOM-0482: a pickup carries a reach and fades to nothing there, so it
@@ -661,7 +684,7 @@ void main()
                     // pools within -reach, or its even wash cannot be seen to come from it.
                     float reach = uintBitsToFloat(L.u[o + 7u]);
                     float d   = sqrt(d2);
-                    float att = 1.0 / (1.0 + d2 * RASTER_INV_RADIUS2);
+                    float att = vis / (1.0 + d2 * RASTER_INV_RADIUS2);
                     float pool = 0.0;
                     if (reach != 0.0)
                     {

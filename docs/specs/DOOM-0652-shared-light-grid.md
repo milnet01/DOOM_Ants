@@ -1,7 +1,7 @@
 <!-- ants-spec-format: 1 -->
 # DOOM-0652 — Light that fades smoothly: a shared light grid, wall-true lamp shadows and blended bounce light
 
-**Status:** accepted (2026-11-21). B1 built; B2 is next.
+**Status:** accepted (2026-11-21). B1 and B2 built; B3 is next.
 **Kind:** fix.
 **Source:** ROADMAP DOOM-0652 (user report 2026-11-21, light lab on E1M1).
 **Also closes:** DOOM-0649 (dim lights crowd bright ones out of a subsector's 16 slots): the
@@ -120,24 +120,29 @@ read for lights.
 ### 4.4 Wall-true occlusion: the polar wall map
 
 Each listed light has a polar map: `RASTER_POLAR_BINS` angle bins round the light, each holding
-the 2D distance to the nearest blocking line. A compute pass builds it from the linedefs within
-the light's range. A blocking line is:
+the 2D distance to the nearest blocking line. The CPU draws it from the linedefs within the
+light's range (`lgrid::BuildPolarMap`), into the light buffer the grid already writes; B2 chose
+this over a compute pass, which would need a pipeline of its own. A blocking line is:
 
-- one-sided; or
+- one-sided, seen from its front. A light behind one is inside solid map, so the line is
+  skipped; or
 - two-sided with no opening (the smaller ceiling is at or below the larger floor), which is how
   a closed door blocks.
 
 A two-sided line with an opening does not block (§ 10).
 
-The fragment takes its angle and 2D distance to the light. It is lit by that light when it is
-nearer than the bin's blocker, plus a bias for the wall's own surface, with a few-tap PCF across
-neighbouring bins. This gives a soft edge one bin wide.
+The fragment is tested `RASTER_POLAR_NBIAS` off its surface along its geometric normal, so a
+wall facing the light does not shadow itself. The blocker distance is interpolated between the
+two nearest bins, and the light fades out over `RASTER_POLAR_SOFT` past it
+(`lgrid::PolarLit`). This gives a soft edge about one bin wide.
 
-The static lights' maps are rebuilt when a sector whose lines are in range changes height: a
-door or a lift, at the moment it settles or every frame while it moves. Dynamic lights' maps
-are rebuilt each frame. The compute pass needs no ray tracing hardware.
+A static light's map changes only when a line in its range shuts or opens; a plane moving
+between two open heights changes no 2D map. A plane move re-reads the lines' state, and a flip
+redraws the maps of the static lights in range and the cell lists. Dynamic lights' maps are
+redrawn each frame. None of it needs ray tracing hardware.
 
-`RejectHides` is no longer used for raster lights.
+REJECT is no longer used for raster lights. The cell lists use the maps instead: a cell keeps a
+light only if some point of it can be lit (`lgrid::PolarBoxMaySee`).
 
 ### 4.5 Probe lattice with reach
 
@@ -165,7 +170,7 @@ short of it. Its weight goes to the corners left; with none left the answer is z
   range, reach and sector. No list is longer than `RASTER_CELL_LIGHTS`. Host-visible, one
   copy per frame in flight in `g.lightBufSlot`, grown to fit. It replaces the per-subsector
   `lightBuf`.
-- Polar maps: lights × `RASTER_POLAR_BINS` floats, device-local, written by compute.
+- Polar maps: lights × `RASTER_POLAR_BINS` floats, in the light buffer after each light table.
 - Probes: lattice points × (16 floats today + 6 reach). The dense lattice is bounded by the seep
   field's `RB_SEEP_MAXDIM` squared, times `RB_PROBE_MAXLAYERS`. B4 measures the largest IWAD
   map's bake time before the caps are fixed.
@@ -191,7 +196,7 @@ Each stage ends with `make`, `make test` and the § 8 captures.
   fragment's sector. A cell also leaves out a light that no sector overlapping it can see
   by REJECT, since the gate would skip it there anyway. Measure the worst cell over every IWAD map and set `RASTER_CELL_LIGHTS`.
   Amend DOOM-0170 INV-6.
-- **B2 — Polar wall maps.** The compute pass and the fragment test. Drop REJECT for raster
+- **B2 — Polar wall maps.** The maps, drawn on the CPU, and the fragment test. Drop REJECT for raster
   lights, and rebuild on door and lift movement.
 - **B3 — Probe lattice and reach.** Placement, the bake's positions and seed, the reach rays,
   `giIrradianceAt` in all three readers.

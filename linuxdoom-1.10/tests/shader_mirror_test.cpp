@@ -17,6 +17,8 @@
 //     its lists from the wrong word. And the half-bright radius, mesh.frag's
 //     RASTER_LIGHT_RADIUS against light_grid.h's RASTER_LIGHT_RADIUS, which each light's
 //     range is derived from: a mismatch ends lights where they are still bright.
+//     And the polar wall map's RASTER_POLAR_BINS, _NBIAS and _SOFT (B2): a bin-count
+//     mismatch reads every wall map at the wrong angle.
 //   - the powerup mode codes, RB_FIXED_* in fixed_colormap.h and
 //     formulas/fixed_colormap.glsl, and RB_INVERSECOLORMAP against p_user.c's
 //     INVERSECOLORMAP (DOOM-0455 INV-2). A mismatch shows the wrong powerup, or
@@ -177,6 +179,10 @@ int main()
     const std::string lg = slurp(DOOM_TESTS_ROOT "/light_grid.h");
     check(!lg.empty(), "light_grid.h is readable");
     same(ms, "RASTER_LIGHT_RADIUS", lg, "RASTER_LIGHT_RADIUS");
+    // DOOM-0652 B2: the polar wall map's bins and its two distances.
+    same(ms, "RASTER_POLAR_BINS",  lg, "RASTER_POLAR_BINS");
+    same(ms, "RASTER_POLAR_NBIAS", lg, "RASTER_POLAR_NBIAS");
+    same(ms, "RASTER_POLAR_SOFT",  lg, "RASTER_POLAR_SOFT");
     {
         const size_t at = vk.find("RG_ORIGIN_X, RG_ORIGIN_Y");
         check(at != std::string::npos, "r_vulkan.cpp still declares the RG_* header enum");
@@ -196,7 +202,7 @@ int main()
             ++word; ++seen;
             p = q;
         }
-        check(seen == 16, "the RG_* header has 16 words on the C side");
+        check(seen == 14, "the RG_* header has 14 words on the C side");
     }
 
     // DOOM-0455 INV-2: the powerup mode codes, C header against GLSL include.

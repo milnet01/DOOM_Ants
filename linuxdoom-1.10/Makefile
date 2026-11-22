@@ -180,6 +180,7 @@ OBJS=				\
 		$(O)/p_user.o			\
 		$(O)/r_backend.o		\
 		$(O)/r_mesh.o			\
+		$(O)/r_lightwall.o		\
 		$(O)/rb_image.o		\
 		$(O)/lz4.o			\
 		$(O)/rb_text.o		\

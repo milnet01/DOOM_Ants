@@ -21218,6 +21218,18 @@ in CLAUDE.md describes.
   1708x800 window, went from 1.5-1.8 ms to 5.4-7.1 ms (E1M4, MAP28,
   E3M6), above the 60 FPS floor but well below the old speed; and a full
   grid rebuild (a switch press) costs up to 9.8 ms, a one-frame hitch.
+  B2 built 2026-11-22: every raster light has a polar wall map (256
+  directions, drawn on the CPU from the lines in range); mesh.frag fades
+  a light out past the nearest one-sided or shut two-sided line. REJECT
+  is gone from the raster lights; the cell lists cull with the wall maps
+  instead. A door or lift that shuts or opens redraws the maps of the
+  lights in range (E1M1 door, 2 lines, 18 maps, 0.86 ms). Load-time
+  build: E1M1 1.1 ms, E1M2 4.5 ms. Scene pass, Solid rasterised, 100 %,
+  quiet machine, B1 -> B2: E1M4 5.64 -> 1.45 ms, MAP28 3.66 -> 1.32,
+  E3M6 4.47 -> 3.40, E1M1 0.72 -> 0.50. Look change: light leaking
+  through walls stops. E1M1's start room is lit by one light inside a
+  recess, so its side walls go dark (bounce returns in B3). For the user
+  to judge. Kit: d0652/ab.sh, door.sh, perf.sh.
   **Layman:** The smooth view lights the map in invisible patches, and the light jumps where two patches meet, drawing straight lines on floors.
   Kind: fix.
   Source: user-2026-11-21.

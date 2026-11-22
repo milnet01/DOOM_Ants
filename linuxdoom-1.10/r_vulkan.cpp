@@ -78,6 +78,7 @@
 #include "rb_text.h"
 #include "menu_text.h"     // DOOM-0211: the crisp menu queue (rb_text_* / rb_menu_*)
 #include "fixed_colormap.h" // DOOM-0455: RB_FIXED_* (invulnerability / visor)
+#include "r_lightwall.h"    // DOOM-0652 B2: RB_LightWalls
 
 // C engine symbols the HD material loader resolves DOOM names against (defined in
 // r_data.c / w_wad.c). Declared here since r_vulkan.cpp doesn't pull r_state.h.
@@ -1155,7 +1156,7 @@ struct VulkanState
     // Parallel to staticWgt (same order, same length), read by ClusterStaticFogLights.
     std::vector<uint8_t> staticEmitLiquid;
     // DOOM-0497: each static emitter's subsector (the mesh's tri_ss), parallel to
-    // staticWgt, so the raster point-light cache can apply the REJECT cull to it.
+    // staticWgt: the room each one's light faces (ClusterStaticLights).
     std::vector<int32_t> staticEmitSs;
     std::vector<int>     liquidMatIds;              // unified ids of the liquid flats
 
@@ -1200,27 +1201,33 @@ struct VulkanState
     VkDeviceMemory lightMem    = VK_NULL_HANDLE;
     void*          lightMapped = nullptr;
     std::vector<rb_probe_t> subCentroid;         // per-subsector centroid (light facing)
-    std::vector<int32_t>    subSecSector;        // per-subsector sector (REJECT gate; empty = off)
-    const unsigned char*    rejectCPU = nullptr; // REJECT bitmatrix (PU_LEVEL, level lifetime)
+    std::vector<int32_t>    subSecSector;        // per-subsector sector (raster light clusters; empty = no REJECT lump)
     // The static part, rebuilt by RebuildStaticLightGrid only when the static set changes
     // (it is camera- and frame-invariant), and copied into a slot only when that slot
     // holds an older generation.
     lgrid::Grid             rasterGrid;          // the seep grid's shape, w 0 = no grid
-    std::vector<uint32_t>   rasterStatic;        // subsec, REJECT, static lights, cells, indices
+    std::vector<uint32_t>   rasterStatic;        // static lights, polar maps, cells, indices
     std::vector<uint32_t>   rasterCells;         // the static (first, count) pairs, for the dynamic cap
-    uint32_t                rasterRejectAt = 0, rasterLightsAt = 0, rasterCellsAt = 0, rasterIdxAt = 0;
+    uint32_t                rasterLightsAt = 0, rasterPolarAt = 0, rasterCellsAt = 0, rasterIdxAt = 0;
     uint32_t                rasterStaticLights = 0;
     uint32_t                rasterGridGen = 0;
     uint32_t                rasterColourGen = 0; // bumped when only the colours changed
     std::vector<int32_t>    rasterClusterLight;  // cluster -> static light index, -1 unlisted
-    // The sectors each cell's floor and walls belong to, end to end (cell c's are
-    // [rasterCellSecAt[c], rasterCellSecAt[c + 1])), for the REJECT cull of the lists.
-    std::vector<uint32_t>   rasterCellSecAt, rasterCellSec;
-    std::vector<uint32_t>   rasterStaticSec, rasterDynSec;   // each light's sector
-    bool                    rasterGate = false;  // the B1 REJECT gate is on
+    bool                    rasterBySector = false;   // clusters keyed on sector too
+    std::vector<lgrid::Light2D> rasterStaticL2;  // the static lights, for re-listing
+    std::vector<float>      rasterStaticPolar;   // their polar wall maps, RASTER_POLAR_BINS each
+    // DOOM-0652 B2: the map's linedefs as light blockers, and each grid cell's list of the
+    // lines whose box overlaps it (cell c's are [rasterWallAt[c], rasterWallAt[c + 1])).
+    // rasterWallsDirty is raised when a plane moved, so a door that shut or opened is
+    // re-read before the next raster frame.
+    std::vector<lgrid::Wall2D> rasterWalls;
+    std::vector<uint32_t>   rasterWallAt, rasterWallIdx, rasterWallStamp, rasterCand;
+    uint32_t                rasterWallTick = 0;
+    bool                    rasterWallsDirty = false;
     // This frame's moving lights, kept between frames only to save reallocation.
     std::vector<uint32_t>       rasterDynRec, rasterDynCells, rasterDynIdx, rasterDynTouched;
     std::vector<lgrid::Light2D> rasterDynL2;
+    std::vector<float>          rasterDynPolar;  // RASTER_POLAR_BINS per moving light
     bool                    staticLightsDirty = true;  // static emitter set changed -> rebuild
     // DOOM-0436: an animated flat or a switch swap changes an emitter's Le but moves no
     // vertex. BuildStaticEmitterSet then raises only this flag, and the grid rewrites
@@ -1231,7 +1238,6 @@ struct VulkanState
     // mapped copies FinalizeEmitters writes. BuildRasterPointLights reads them once per
     // subsector per emitter; reading the mapped buffers there cost ~1.4 ms a frame.
     std::vector<float>      frameDynEmit;        // 14 floats per dynamic record
-    std::vector<uint32_t>   frameDynSec;         // sector per dynamic record
     std::vector<float>      frameDynReach;       // DOOM-0482: raster reach per dynamic record
 
     bool ready        = false;
@@ -7923,7 +7929,6 @@ void FinalizeEmitters(const std::vector<float>* dynEmit, const std::vector<float
     // shared nee_merge_emitters() (nee_sampling.h), unit-tested in nee_sampling_test.
     const int dynN = (dynEmit && dynWgt) ? (int)dynWgt->size() : 0;
     if (dynN) g.frameDynEmit = *dynEmit; else g.frameDynEmit.clear();
-    if (dynN && dynSec) g.frameDynSec = *dynSec; else g.frameDynSec.clear();
     g.emitCount = (uint32_t)nee_merge_emitters(
         g.staticEmit.data(), g.staticWgt.data(), (int)g.staticWgt.size(),
         dynN ? dynEmit->data() : nullptr, dynN ? dynWgt->data() : nullptr, dynN,
@@ -7950,13 +7955,15 @@ void FinalizeEmitters(const std::vector<float>* dynEmit, const std::vector<float
 // DOOM-0652: the rasterised view's light grid (spec 4.1-4.3). One buffer per in-flight
 // slot, read by mesh.frag as 32-bit words:
 //   [0, RASTER_GRID_HEADER)  the header below
-//   subsector -> sector, then the REJECT bits  (the B1 gate; empty when the gate is off)
-//   static lights, two words per cell (first, count), the static indices (on change)
-//   dynamic lights, two words per cell (first, count), the dynamic indices (every frame)
-// A light record is RASTER_LIGHT_FLOATS words: position[3] range colour[3] reach sector.
+//   static lights, their polar wall maps, two words per cell (first, count), the static
+//     indices (written when they change)
+//   dynamic lights, two words per cell, the dynamic indices, their polar maps (every frame)
+// A light record is RASTER_LIGHT_FLOATS words: position[3] range colour[3] reach. Light i's
+// polar map is the RASTER_POLAR_BINS floats at its block's start + i * RASTER_POLAR_BINS
+// (light_grid.h, spec 4.4).
 // reach is 0 for a wall or flat light; above zero it is a pickup's own roll-off
 // (DOOM-0482); below zero it is a lamp, whose pool reaches -reach (DOOM-0645).
-static const uint32_t RASTER_LIGHT_FLOATS = 9;
+static const uint32_t RASTER_LIGHT_FLOATS = 8;
 static const uint32_t RASTER_GRID_HEADER  = 16;
 // The raster lights' cluster lattice (world units). Coarser than the fog's
 // RB_FOG_LIGHT_CLUSTER because a fragment loops every light in its cell: at the fog's 64,
@@ -7966,7 +7973,7 @@ static const float    RASTER_LIGHT_CLUSTER = 128.0f;
 enum : uint32_t {
     RG_ORIGIN_X, RG_ORIGIN_Y, RG_INV_CELL, RG_W, RG_H, RG_IDX,
     RG_STATIC_LIGHTS, RG_CELLS, RG_DYN_LIGHTS, RG_DYN_CELLS, RG_DYN_IDX,
-    RG_SUBSEC, RG_REJECT, RG_NUM_SECTORS, RG_NUM_SUB, RG_ON
+    RG_STATIC_POLAR, RG_DYN_POLAR, RG_ON
 };
 // DOOM-0482: a pickup's raster light reaches this far (world units), so it lights the
 // floor around it and not a wall a few steps away. E1M2's Soulsphere stands about 115
@@ -8363,8 +8370,9 @@ static void RasterLightColour(const float* Le, float reach, float out[3])
 // Cluster the static emitter records (g.staticEmit, the RAM array the merged emitter
 // buffer's static slice is copied from) onto a lattice of `lattice` units. One
 // builder serves the fog and the raster light grid (DOOM-0652 spec 4.1). bySector also
-// keys on the triangle's sector, which the raster grid's REJECT gate needs until B2;
-// the fog passes false and gets exactly its DOOM-0011 L3 clusters.
+// keys on the triangle's sector, so a raster light's centre stays in its own room instead
+// of averaging across the wall between two; the fog passes false and gets exactly its
+// DOOM-0011 L3 clusters.
 // [0, staticN) only — INV-2. Dynamic sprite emitters (flying fireballs, the muzzle flash,
 // the flashlight) must never scatter, and they are also not knowable at bake time.
 static std::vector<RbLightCluster> ClusterStaticLights(int staticN, bool bySector, float lattice)
@@ -8490,94 +8498,129 @@ static std::vector<RbFogLight> ClusterStaticFogLights(int staticN)
     return out;
 }
 
-// DOOM-0119: does the REJECT matrix say sector secA cannot see sector secE? Both are
-// in [0, g.numSectors), which BuildProbes has checked the matrix is big enough for. The
-// bit index is taken in 64 bits: secA * numSectors passes INT_MAX from 46341 sectors.
-static bool RejectHides(uint32_t secA, uint32_t secE)
-{
-    const uint64_t bit = (uint64_t)secA * g.numSectors + (uint64_t)secE;
-    return (g.rejectCPU[bit >> 3] >> (bit & 7)) & 1u;
-}
-
-// DOOM-0652: the sectors whose subsectors overlap each grid cell, from the level mesh:
-// every triangle lies in or on the edge of its subsector, so a subsector's triangles
-// bound it. Padded a unit, so a wall on a cell edge counts in both cells.
-static void BuildCellSectors()
-{
-    const lgrid::Grid& gr = g.rasterGrid;
-    const size_t cells = (size_t)gr.w * gr.h;
-    const int    numSub = (int)g.probeCount;
-    std::vector<float> box((size_t)numSub * 4);
-    for (int i = 0; i < numSub; i++)
-    { box[i * 4 + 0] = box[i * 4 + 1] = 1e30f; box[i * 4 + 2] = box[i * 4 + 3] = -1e30f; }
-    const rb_mesh_t* m = g.levelMesh;
-    for (int t = 0; m && t < m->numtris; t++)
-    {
-        const int ss = m->tri_ss[t];
-        if (ss < 0 || ss >= numSub) continue;
-        for (int k = 0; k < 3; k++)
-        {
-            const rb_vertex_t& v = m->verts[t * 3 + k];
-            float* b = &box[(size_t)ss * 4];
-            b[0] = std::min(b[0], v.x); b[1] = std::min(b[1], v.y);
-            b[2] = std::max(b[2], v.x); b[3] = std::max(b[3], v.y);
-        }
-    }
-    std::vector<std::vector<uint32_t>> per(cells);
-    for (int i = 0; i < numSub; i++)
-    {
-        const float* b = &box[(size_t)i * 4];
-        if (b[0] > b[2]) continue;                // no triangles
-        auto cellOf = [&](float v, float o) { return (int)std::floor((v - o) / gr.cell + 0.5f); };
-        const int x0 = std::max(0, cellOf(b[0] - 1.0f, gr.ox)), x1 = std::min(gr.w - 1, cellOf(b[2] + 1.0f, gr.ox));
-        const int y0 = std::max(0, cellOf(b[1] - 1.0f, gr.oy)), y1 = std::min(gr.h - 1, cellOf(b[3] + 1.0f, gr.oy));
-        const uint32_t sec = (uint32_t)g.subSecSector[(size_t)i];
-        for (int iy = y0; iy <= y1; iy++)
-        for (int ix = x0; ix <= x1; ix++)
-        {
-            std::vector<uint32_t>& l = per[(size_t)iy * gr.w + ix];
-            if (std::find(l.begin(), l.end(), sec) == l.end()) l.push_back(sec);
-        }
-    }
-    g.rasterCellSecAt.assign(cells + 1, 0u);
-    g.rasterCellSec.clear();
-    for (size_t c = 0; c < cells; c++)
-    {
-        g.rasterCellSecAt[c] = (uint32_t)g.rasterCellSec.size();
-        g.rasterCellSec.insert(g.rasterCellSec.end(), per[c].begin(), per[c].end());
-    }
-    g.rasterCellSecAt[cells] = (uint32_t)g.rasterCellSec.size();
-}
-
-// DOOM-0652: may a light of sector `sec` stay in cell c's list? Only if some sector in the
-// cell can see it by REJECT: mesh.frag's gate would skip it for every fragment there.
-static bool CellMaySee(size_t c, uint32_t sec)
-{
-    if (!g.rasterGate || sec >= g.numSectors || c + 1 >= g.rasterCellSecAt.size())
-        return true;
-    for (uint32_t k = g.rasterCellSecAt[c]; k < g.rasterCellSecAt[c + 1]; k++)
-        if (!RejectHides(g.rasterCellSec[k], sec))
-            return true;
-    return false;
-}
-
 // DOOM-0652: one light record (RASTER_LIGHT_FLOATS words) appended to `out`.
 static void PackRasterLight(std::vector<uint32_t>& out, float x, float y, float z, float range,
-                            const float col[3], float reach, uint32_t sector)
+                            const float col[3], float reach)
 {
-    const float f[8] = { x, y, z, range, col[0], col[1], col[2], reach };
+    const float f[RASTER_LIGHT_FLOATS] = { x, y, z, range, col[0], col[1], col[2], reach };
     for (float v : f)
     {
         uint32_t u;
         std::memcpy(&u, &v, sizeof u);
         out.push_back(u);
     }
-    out.push_back(sector);
 }
 
-// DOOM-0652 spec 4.1-4.3: rebuild the static part of the raster light grid: the clustered
-// wall and flat lights, each cell's list of every one that reaches it, and the B1 REJECT
-// gate's tables. Runs when the static emitter set or its Le changes (g.staticLightsDirty,
+// DOOM-0652 B2: read the map's linedefs as light blockers (RB_LightWalls) and list, for
+// each grid cell, the lines whose box overlaps it, so a light gathers only the lines near
+// it. Lines never move in DOOM; only whether a two-sided one is shut changes.
+static void BuildRasterWalls()
+{
+    static_assert(sizeof(rb_lwall_t) == sizeof(lgrid::Wall2D), "rb_lwall_t mirrors lgrid::Wall2D");
+    const int n = std::max(RB_LightWalls(nullptr, 0), 0);
+    g.rasterWalls.resize((size_t)n);
+    if (n > 0) RB_LightWalls(reinterpret_cast<rb_lwall_t*>(g.rasterWalls.data()), n);
+    g.rasterWallsDirty = false;
+    g.rasterWallStamp.assign((size_t)n, 0u);
+    g.rasterWallTick = 0;
+
+    const lgrid::Grid& gr = g.rasterGrid;
+    const size_t cells = (size_t)gr.w * gr.h;
+    auto cellOf = [&](float v, float o, int hi) {
+        return std::min(std::max((int)std::floor((v - o) / gr.cell + 0.5f), 0), hi);
+    };
+    g.rasterWallAt.assign(cells + 1, 0u);
+    for (int pass = 0; pass < 2; pass++)
+    {
+        if (pass == 1)
+        {
+            for (size_t c = 0; c < cells; c++) g.rasterWallAt[c + 1] += g.rasterWallAt[c];
+            g.rasterWallIdx.assign(g.rasterWallAt[cells], 0u);
+        }
+        std::vector<uint32_t> fill(pass == 1 ? cells : 0, 0u);
+        for (int i = 0; i < n; i++)
+        {
+            const lgrid::Wall2D& w = g.rasterWalls[(size_t)i];
+            const int x0 = cellOf(std::min(w.x1, w.x2), gr.ox, gr.w - 1), x1 = cellOf(std::max(w.x1, w.x2), gr.ox, gr.w - 1);
+            const int y0 = cellOf(std::min(w.y1, w.y2), gr.oy, gr.h - 1), y1 = cellOf(std::max(w.y1, w.y2), gr.oy, gr.h - 1);
+            for (int iy = y0; iy <= y1; iy++)
+            for (int ix = x0; ix <= x1; ix++)
+            {
+                const size_t c = (size_t)iy * gr.w + ix;
+                if (pass == 0) g.rasterWallAt[c + 1]++;
+                else           g.rasterWallIdx[g.rasterWallAt[c] + fill[c]++] = (uint32_t)i;
+            }
+        }
+    }
+}
+
+// DOOM-0652 B2: draw the polar wall map of a light at (x, y) with range R into out, from
+// the lines in the cells its range's square covers.
+static void DrawRasterPolar(float x, float y, float R, float* out)
+{
+    const lgrid::Grid& gr = g.rasterGrid;
+    g.rasterCand.clear();
+    if (++g.rasterWallTick == 0)
+    {
+        std::fill(g.rasterWallStamp.begin(), g.rasterWallStamp.end(), 0u);
+        g.rasterWallTick = 1;
+    }
+    if (gr.w > 0 && !g.rasterWallAt.empty())
+    {
+        auto cellOf = [&](float v, float o, int hi) {
+            return std::min(std::max((int)std::floor((v - o) / gr.cell + 0.5f), 0), hi);
+        };
+        const int x0 = cellOf(x - R, gr.ox, gr.w - 1), x1 = cellOf(x + R, gr.ox, gr.w - 1);
+        const int y0 = cellOf(y - R, gr.oy, gr.h - 1), y1 = cellOf(y + R, gr.oy, gr.h - 1);
+        for (int iy = y0; iy <= y1; iy++)
+        for (int ix = x0; ix <= x1; ix++)
+        {
+            const size_t c = (size_t)iy * gr.w + ix;
+            for (uint32_t k = g.rasterWallAt[c]; k < g.rasterWallAt[c + 1]; k++)
+            {
+                const uint32_t id = g.rasterWallIdx[k];
+                if (g.rasterWallStamp[id] == g.rasterWallTick) continue;
+                g.rasterWallStamp[id] = g.rasterWallTick;
+                g.rasterCand.push_back(id);
+            }
+        }
+    }
+    lgrid::BuildPolarMap(x, y, R, g.rasterWalls.data(), g.rasterCand.data(),
+                         (int)g.rasterCand.size(), out);
+}
+
+// DOOM-0652 B2: may light l, whose polar map is `map`, light any point of grid cell c? The
+// cell lists ask this in place of B1's REJECT cull.
+static bool RasterCellMaySee(size_t c, const float* map, const lgrid::Light2D& l)
+{
+    const lgrid::Grid& gr = g.rasterGrid;
+    const int ix = (int)(c % (size_t)gr.w), iy = (int)(c / (size_t)gr.w);
+    return lgrid::PolarBoxMaySee(map, l.x, l.y, gr.ox + (float)ix * gr.cell,
+                                 gr.oy + (float)iy * gr.cell, 0.5f * gr.cell);
+}
+
+// DOOM-0652: list the static lights per cell, each left out of the cells its polar map
+// shows it cannot reach, and lay the lists after the polar maps in g.rasterStatic.
+static lgrid::ListStats ListStaticLights()
+{
+    const uint32_t B = lgrid::RASTER_POLAR_BINS;
+    std::vector<uint32_t> cells, idx;
+    const lgrid::ListStats st = lgrid::BuildCellLists(g.rasterGrid, g.rasterStaticL2.data(),
+        (int)g.rasterStaticL2.size(), lgrid::RASTER_CELL_LIGHTS, cells, idx,
+        [](size_t c, uint32_t i) {
+            return RasterCellMaySee(c, &g.rasterStaticPolar[(size_t)i * B], g.rasterStaticL2[i]);
+        });
+    g.rasterStatic.resize(g.rasterCellsAt);
+    g.rasterStatic.insert(g.rasterStatic.end(), cells.begin(), cells.end());
+    g.rasterIdxAt = (uint32_t)g.rasterStatic.size();
+    g.rasterStatic.insert(g.rasterStatic.end(), idx.begin(), idx.end());
+    g.rasterCells.swap(cells);
+    return st;
+}
+
+// DOOM-0652 spec 4.1-4.4: rebuild the static part of the raster light grid: the clustered
+// wall and flat lights, their polar wall maps, and each cell's list of every one that can
+// reach it. Runs when the static emitter set or its Le changes (g.staticLightsDirty,
 // g.staticLightLeDirty) and when the seep grid it shares appears or changes shape.
 static void RebuildStaticLightGrid(int staticN)
 {
@@ -8586,6 +8629,8 @@ static void RebuildStaticLightGrid(int staticN)
     g.rasterGridGen++;
     g.rasterClusterLight.clear();
     g.rasterStatic.clear();
+    g.rasterStaticL2.clear();
+    g.rasterStaticPolar.clear();
     g.rasterStaticLights = 0;
     g.rasterGrid = lgrid::Grid();
     const rb_seep_t* f = g.seepField;
@@ -8594,35 +8639,15 @@ static void RebuildStaticLightGrid(int staticN)
     const double t0 = CpuNowMs();
     g.rasterGrid.ox = f->originX; g.rasterGrid.oy = f->originY;
     g.rasterGrid.cell = f->cell;  g.rasterGrid.w = f->w; g.rasterGrid.h = f->h;
-
-    // The B1 gate (spec 7): a light is dropped where the fragment's sector cannot see the
-    // light's, by REJECT. mesh.frag forms secA * numSectors + secE in 32 bits, so the gate
-    // is off past 65535 sectors rather than wrapping.
-    const int  numSub = (int)g.probeCount;
-    const bool gate = g.numSectors > 0 && g.numSectors <= 65535u && g.rejectCPU &&
-                      (int)g.subSecSector.size() >= numSub;
-    g.rasterGate = gate;
-    if (gate)
-        BuildCellSectors();
-    if (gate)
-    {
-        for (int i = 0; i < numSub; i++)
-            g.rasterStatic.push_back((uint32_t)g.subSecSector[(size_t)i]);
-        const size_t bytes = ((size_t)g.numSectors * g.numSectors + 7) / 8;
-        const size_t at    = g.rasterStatic.size();
-        g.rasterStatic.resize(at + (bytes + 3) / 4, 0u);
-        std::memcpy(&g.rasterStatic[at], g.rejectCPU, bytes);   // BuildProbes checked its size
-    }
-    g.rasterRejectAt = gate ? (uint32_t)numSub : 0u;
+    BuildRasterWalls();
 
     // The lights: one per cluster, at its centre pushed RASTER_LIGHT_LIFT off its own
     // surface, coloured with the sum of its triangles' raster colours (spec 4.1).
     static const float RASTER_LIGHT_LIFT = 2.0f;
-    const auto clusters = ClusterStaticLights(staticN, gate, RASTER_LIGHT_CLUSTER);
-    std::vector<lgrid::Light2D> l2;
-    g.rasterLightsAt = (uint32_t)g.rasterStatic.size();
+    g.rasterBySector = !g.subSecSector.empty();
+    const auto clusters = ClusterStaticLights(staticN, g.rasterBySector, RASTER_LIGHT_CLUSTER);
+    g.rasterLightsAt = 0;
     g.rasterClusterLight.assign(clusters.size(), -1);
-    g.rasterStaticSec.clear();
     for (size_t ci = 0; ci < clusters.size(); ci++)
     {
         const RbLightCluster& c = clusters[ci];
@@ -8630,46 +8655,103 @@ static void RebuildStaticLightGrid(int staticN)
         const float range = lgrid::RasterLightRange(peak);
         if (!(range > 0.0f))
             continue;
-        g.rasterClusterLight[ci] = (int32_t)l2.size();
+        g.rasterClusterLight[ci] = (int32_t)g.rasterStaticL2.size();
         const float nl = std::sqrt(c.nx * c.nx + c.ny * c.ny + c.nz * c.nz);
         const float k  = nl > 0.0f ? RASTER_LIGHT_LIFT / nl : 0.0f;
         const float x = c.x + c.nx * k, y = c.y + c.ny * k, z = c.z + c.nz * k;
-        const uint32_t sec = c.sector >= 0 ? (uint32_t)c.sector : 0xFFFFFFFFu;
-        PackRasterLight(g.rasterStatic, x, y, z, range, c.col, 0.0f, sec);
-        g.rasterStaticSec.push_back(sec);
-        l2.push_back(lgrid::Light2D{ x, y, range });
+        PackRasterLight(g.rasterStatic, x, y, z, range, c.col, 0.0f);
+        g.rasterStaticL2.push_back(lgrid::Light2D{ x, y, range });
     }
-    g.rasterStaticLights = (uint32_t)l2.size();
+    g.rasterStaticLights = (uint32_t)g.rasterStaticL2.size();
 
-    std::vector<uint32_t> cells, idx;
-    const lgrid::ListStats st = lgrid::BuildCellLists(g.rasterGrid, l2.data(), (int)l2.size(),
-        lgrid::RASTER_CELL_LIGHTS, cells, idx,
-        [](size_t c, uint32_t i) { return CellMaySee(c, g.rasterStaticSec[i]); });
+    // Their polar wall maps (spec 4.4), drawn on the CPU from the lines in range.
+    const double tP0 = CpuNowMs();
+    const size_t B = lgrid::RASTER_POLAR_BINS;
+    g.rasterStaticPolar.resize((size_t)g.rasterStaticLights * B);
+    for (uint32_t i = 0; i < g.rasterStaticLights; i++)
+    {
+        const lgrid::Light2D& l = g.rasterStaticL2[i];
+        DrawRasterPolar(l.x, l.y, l.range, &g.rasterStaticPolar[(size_t)i * B]);
+    }
+    g.rasterPolarAt = (uint32_t)g.rasterStatic.size();
+    g.rasterStatic.resize(g.rasterPolarAt + g.rasterStaticPolar.size());
+    if (!g.rasterStaticPolar.empty())
+        std::memcpy(&g.rasterStatic[g.rasterPolarAt], g.rasterStaticPolar.data(),
+                    g.rasterStaticPolar.size() * sizeof(float));
+    const double tP1 = CpuNowMs();
     g.rasterCellsAt = (uint32_t)g.rasterStatic.size();
-    g.rasterStatic.insert(g.rasterStatic.end(), cells.begin(), cells.end());
-    g.rasterIdxAt = (uint32_t)g.rasterStatic.size();
-    g.rasterStatic.insert(g.rasterStatic.end(), idx.begin(), idx.end());
-    g.rasterCells.swap(cells);
+    const lgrid::ListStats st = ListStaticLights();
     // The worst list is the number RASTER_CELL_LIGHTS is sized from (spec 7 B1), and an
     // overflow is the one case where a light can step at a cell edge, so both are printed.
     printf("RB_Vulkan: DOOM-0652 raster light grid — %d emitter tris -> %u lights, "
-           "%dx%d cells of %.0f, worst cell %u lights at (%.0f, %.0f) (cap %u, %u cells over), REJECT gate %s (%.1f ms).\n",
+           "%dx%d cells of %.0f, worst cell %u lights at (%.0f, %.0f) (cap %u, %u cells over), "
+           "%zu walls, wall maps %.1f ms (%.1f ms in all).\n",
            staticN, g.rasterStaticLights, f->w, f->h, f->cell, st.worst,
            f->originX + (float)(st.worstCell % (size_t)f->w) * f->cell,
            f->originY + (float)(st.worstCell / (size_t)f->w) * f->cell,
-           lgrid::RASTER_CELL_LIGHTS, st.overflow, gate ? "on" : "off", CpuNowMs() - t0);
+           lgrid::RASTER_CELL_LIGHTS, st.overflow, g.rasterWalls.size(), tP1 - tP0, CpuNowMs() - t0);
+    fflush(stdout);
+}
+
+// DOOM-0652 B2: a plane moved, so re-read which lines block. Where a door shut or opened,
+// redraw the polar map of every static light in range of it and list the cells again.
+// The moving lights redraw theirs every frame anyway.
+static void RefreshRasterWalls()
+{
+    g.rasterWallsDirty = false;
+    const size_t n = g.rasterWalls.size();
+    if (n == 0 || (size_t)RB_LightWalls(nullptr, 0) != n)
+        return;
+    static std::vector<lgrid::Wall2D> now;
+    now.resize(n);
+    RB_LightWalls(reinterpret_cast<rb_lwall_t*>(now.data()), (int)n);
+    std::vector<uint32_t> flipped;
+    for (size_t i = 0; i < n; i++)
+        if (now[i].kind != g.rasterWalls[i].kind)
+        {
+            g.rasterWalls[i].kind = now[i].kind;
+            flipped.push_back((uint32_t)i);
+        }
+    if (flipped.empty())
+        return;
+    const double t0 = CpuNowMs();
+    const size_t B = lgrid::RASTER_POLAR_BINS;
+    uint32_t redrawn = 0;
+    for (uint32_t i = 0; i < g.rasterStaticLights; i++)
+    {
+        const lgrid::Light2D& l = g.rasterStaticL2[i];
+        bool reaches = false;
+        for (uint32_t id : flipped)
+        {
+            const lgrid::Wall2D& w = g.rasterWalls[id];
+            if (RB_SeepPointSegDist(l.x, l.y, w.x1, w.y1, w.x2, w.y2) < l.range) { reaches = true; break; }
+        }
+        if (!reaches)
+            continue;
+        float* map = &g.rasterStaticPolar[(size_t)i * B];
+        DrawRasterPolar(l.x, l.y, l.range, map);
+        std::memcpy(&g.rasterStatic[g.rasterPolarAt + (size_t)i * B], map, B * sizeof(float));
+        redrawn++;
+    }
+    if (redrawn)
+    {
+        ListStaticLights();
+        g.rasterGridGen++;
+    }
+    printf("RB_Vulkan: DOOM-0652 %zu line(s) shut or opened, %u light wall maps redrawn (%.2f ms).\n",
+           flipped.size(), redrawn, CpuNowMs() - t0);
     fflush(stdout);
 }
 
 // DOOM-0436 / DOOM-0652: an animated flat or a switch changed only some emitters' Le, so
 // the same triangles cluster into the same lights. Rewrite each listed light's colour and
-// keep its range and the cell lists: E1M1's nukage does this several times a second, and
-// a full rebuild there is a millisecond and a fresh copy of every cell row. A light keeps
-// the range its first colour gave it, so its window still ends at zero (INV-2).
+// keep its range, wall map and the cell lists: E1M1's nukage does this several times a
+// second, and a full rebuild there is a millisecond and a fresh copy of every cell row. A
+// light keeps the range its first colour gave it, so its window still ends at zero (INV-2).
 static void RefreshStaticLightColours(int staticN)
 {
     g.staticLightLeDirty = false;
-    const auto clusters = ClusterStaticLights(staticN, g.rasterGate, RASTER_LIGHT_CLUSTER);
+    const auto clusters = ClusterStaticLights(staticN, g.rasterBySector, RASTER_LIGHT_CLUSTER);
     if (clusters.size() != g.rasterClusterLight.size())
     {
         RebuildStaticLightGrid(staticN);          // not the same clusters after all
@@ -8735,6 +8817,8 @@ void BuildRasterPointLights()
         RebuildStaticLightGrid(staticN);
     else if (g.staticLightLeDirty)
         RefreshStaticLightColours(staticN);
+    if (g.rasterWallsDirty && g.rasterGrid.w > 0)
+        RefreshRasterWalls();
 
     uint32_t* out = (uint32_t*)g.lightMapped;
     if (g.rasterGrid.w <= 0)
@@ -8748,10 +8832,7 @@ void BuildRasterPointLights()
     lgrid::ClearDynLists(g.rasterDynCells, g.rasterDynTouched);
     g.rasterDynRec.clear();
     g.rasterDynL2.clear();
-    g.rasterDynSec.clear();
     const float*    em  = g.frameDynEmit.data();
-    const uint32_t* es  = g.frameDynSec.data();
-    const int       esN = (int)g.frameDynSec.size();
     const float*    er  = g.frameDynReach.data();
     const int       erN = (int)g.frameDynReach.size();
     for (int d = 0; d < dynN; d++)
@@ -8767,15 +8848,24 @@ void BuildRasterPointLights()
         const float x = (r[0] + r[3] + r[6]) * (1.0f / 3.0f);
         const float y = (r[1] + r[4] + r[7]) * (1.0f / 3.0f);
         const float z = (r[2] + r[5] + r[8]) * (1.0f / 3.0f);
-        const uint32_t sec = d < esN ? es[d] : 0xFFFFFFFFu;
-        PackRasterLight(g.rasterDynRec, x, y, z, range, col, reach, sec);
-        g.rasterDynSec.push_back(sec);
+        PackRasterLight(g.rasterDynRec, x, y, z, range, col, reach);
         g.rasterDynL2.push_back(lgrid::Light2D{ x, y, range });
+    }
+    // Their polar wall maps, redrawn every frame: they move (spec 4.4).
+    const size_t B = lgrid::RASTER_POLAR_BINS;
+    g.rasterDynPolar.resize(g.rasterDynL2.size() * B);
+    for (size_t i = 0; i < g.rasterDynL2.size(); i++)
+    {
+        const lgrid::Light2D& l = g.rasterDynL2[i];
+        DrawRasterPolar(l.x, l.y, l.range, &g.rasterDynPolar[i * B]);
     }
     const lgrid::ListStats st = lgrid::BuildDynLists(g.rasterGrid, g.rasterDynL2.data(),
         (int)g.rasterDynL2.size(), g.rasterCells, lgrid::RASTER_CELL_LIGHTS,
         g.rasterDynCells, g.rasterDynIdx, g.rasterDynTouched,
-        [](size_t c, uint32_t i) { return CellMaySee(c, g.rasterDynSec[i]); });
+        [](size_t c, uint32_t i) {
+            return RasterCellMaySee(c, &g.rasterDynPolar[(size_t)i * lgrid::RASTER_POLAR_BINS],
+                                    g.rasterDynL2[i]);
+        });
     // An overflow drops a light at a cell edge, so it is reported -- once a second at
     // most, since this runs every frame.
     static uint32_t lastOverMs = 0;
@@ -8795,7 +8885,8 @@ void BuildRasterPointLights()
     const uint32_t dynAt   = H + (uint32_t)g.rasterStatic.size();
     const uint32_t dCells  = dynAt + (uint32_t)g.rasterDynRec.size();
     const uint32_t dIdx    = dCells + (uint32_t)g.rasterDynCells.size();
-    const uint32_t end     = dIdx + (uint32_t)g.rasterDynIdx.size();
+    const uint32_t dPolar  = dIdx + (uint32_t)g.rasterDynIdx.size();
+    const uint32_t end     = dPolar + (uint32_t)g.rasterDynPolar.size();
     EnsureLightSlot((VkDeviceSize)end * sizeof(uint32_t));
     out = (uint32_t*)g.lightMapped;
     const uint32_t s = g.frameSlot;
@@ -8817,6 +8908,8 @@ void BuildRasterPointLights()
     std::memcpy(out + dCells, g.rasterDynCells.data(), g.rasterDynCells.size() * sizeof(uint32_t));
     if (!g.rasterDynIdx.empty())
         std::memcpy(out + dIdx, g.rasterDynIdx.data(), g.rasterDynIdx.size() * sizeof(uint32_t));
+    if (!g.rasterDynPolar.empty())
+        std::memcpy(out + dPolar, g.rasterDynPolar.data(), g.rasterDynPolar.size() * sizeof(float));
 
     uint32_t hd[RASTER_GRID_HEADER] = {};
     const float hf[3] = { g.rasterGrid.ox, g.rasterGrid.oy, 1.0f / g.rasterGrid.cell };
@@ -8829,10 +8922,8 @@ void BuildRasterPointLights()
     hd[RG_DYN_LIGHTS]    = dynAt;
     hd[RG_DYN_CELLS]     = dCells;
     hd[RG_DYN_IDX]       = dIdx;
-    hd[RG_SUBSEC]        = H;
-    hd[RG_REJECT]        = H + g.rasterRejectAt;
-    hd[RG_NUM_SECTORS]   = g.rasterGate ? g.numSectors : 0u;
-    hd[RG_NUM_SUB]       = g.probeCount;
+    hd[RG_STATIC_POLAR]  = H + g.rasterPolarAt;
+    hd[RG_DYN_POLAR]     = dPolar;
     hd[RG_ON]            = 1u;
     std::memcpy(out, hd, sizeof hd);
 }
@@ -9452,7 +9543,6 @@ void BuildProbes()
     g.lightBuf = VK_NULL_HANDLE; g.lightMem = VK_NULL_HANDLE; g.lightMapped = nullptr;
     g.subCentroid.clear();
     g.subSecSector.clear();
-    g.rejectCPU  = nullptr;
     g.probeCount = 0;
     g.numSectors = 0;
 
@@ -9540,12 +9630,9 @@ void BuildProbes()
         UploadAddressBuffer(subSec.data(), (VkDeviceSize)subSec.size() * sizeof(int32_t),
                             &g.subSecBuf, &g.subSecMem);
 
-        // DOOM-0170 L1b: keep CPU copies for the raster point-light cull. The GPU path
-        // (megakernel) reads the uploaded buffers; the raster cull runs on the CPU each
-        // frame, so it needs the subsector->sector map + the raw REJECT bytes here. The
-        // reject pointer is the PU_LEVEL lump, valid for this level's lifetime.
+        // DOOM-0652: keep a CPU copy of the subsector->sector map, which keys the raster
+        // light clusters on sector (ClusterStaticLights). The megakernel reads the upload.
         g.subSecSector.assign(subSec.begin(), subSec.begin() + got);
-        g.rejectCPU = reject;
 
         // Pad the byte matrix up to a uint-word multiple so the shader's last word
         // read is fully backed; the high padding bytes are never addressed.
@@ -9697,10 +9784,9 @@ extern "C" void RB_Vulkan_BuildLevel(void)
     {
         // Empty map (no drawable geometry): nothing to upload. DOOM-0390: but the
         // previous level's per-level state must still go. This return used to sit
-        // above every rebuild call below, and BuildProbes is the only place that
-        // clears g.rejectCPU -- a pointer into PU_LEVEL memory the loader has already
-        // freed -- which BuildRasterPointLights then read every raster frame. With no
-        // mesh each of these calls tears its state down and builds nothing.
+        // above every rebuild call below, so the previous level's state outlived it,
+        // including a pointer into PU_LEVEL memory the loader had already freed. With
+        // no mesh each of these calls tears its state down and builds nothing.
         RB_FreeMesh(g.levelMesh);
         g.levelMesh = nullptr;
         if (g.rtEnabled)
@@ -10978,6 +11064,7 @@ static void BuildFrameReheight(bool cprof, bool ownTotal)
         g.clearanceDirty = true;                 // height-keyed: always suspect
         if (RB_SeepOpeningsChanged())            // connectivity-keyed: only a flip counts
             g.seepDirty = true;
+        g.rasterWallsDirty = true;               // DOOM-0652 B2: a door may have shut or opened
         // DOOM-0296: the fog-light grid is height-keyed too, for the same reason and one
         // more. Its bake asks P_CheckSightTrace, whose P_CrossSubsector narrows the slope
         // range from opentop/openbottom -- so the answer moves CONTINUOUSLY with plane
