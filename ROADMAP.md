@@ -21282,6 +21282,16 @@ in CLAUDE.md describes.
   moving a void column's probe into the cell's air so narrow corridors
   get their own. Vestige's nit: the polar lookup tapers a lamp shadow
   for about half a bin past a pillar edge. UT_Ants' review is pending.
+  2026-11-22, Vestige on B5 (for the spec amendment): (1) a 2D map
+  knows walls, not floors: keep the ±z reach rays, or carry each bin's
+  open z gap. (2) Two-sided lines with any opening count as open
+  (r_lightwall.c LW_OPEN), so a probe under a tall ledge sees the floor
+  above; one opening-height test per bin fixes (1) and (2) together.
+  (3) Cost: 8 corner reads plus 8 dependent bin reads per pixel, so bake
+  a per-cube "all 8 corners see the whole cube" bit and skip the maps in
+  open rooms. (4) A probe moved off its lattice point: draw its map from
+  the moved position, and either weight by that position or state in the
+  spec that the trilinear weight error is accepted.
   **Layman:** The smooth view lights the map in invisible patches, and the light jumps where two patches meet, drawing straight lines on floors.
   Kind: fix.
   Source: user-2026-11-21.
