@@ -67,6 +67,9 @@ layout(set = 0, binding = 5) uniform SeepXform {
     vec2 dims;      // cell counts, as float, for the UV divide
     uvec2 neeAddr;  // DOOM-0653: the traced view's NEE cell lists (NeeLists); 0 = none
 } seep;
+// DOOM-0651: per seep cell, how much outdoor air it can see (sky_vis.h), on the same
+// grid and sampled through the same transform. R16F: the seep image's channels are full.
+layout(set = 0, binding = 7) uniform sampler2D uSkyVis;
 
 vec2 worldToSeepUV(vec2 worldXY)
 {
@@ -1159,8 +1162,14 @@ vec4 marchFog(vec3 ro, vec3 rd, float tHit, FogHit h)
         // such path. Without this the fog stops at a bright straight edge under a roof
         // line, however thick the roofed air is. Open sky is untouched, and a sealed room
         // reads dMax, so its spill is about zero (INV-12).
+        // DOOM-0651: with only sourced light, the sky reaches roofed air only as far as the
+        // air can SEE outdoors. seepT follows open space round corners, so on its own it
+        // lit a corridor that bends away from every door. The default look keeps seepT
+        // alone until DOOM-0642's B7 (its INV-6: no stage darkens the default look).
+        float skyT = (sourcedLightOnly() && !openSky)
+                   ? seepT * texture(uSkyVis, worldToSeepUV(p.xy)).r : seepT;
         if (skyExists && kSkyAmbientFrac < 1.0 && !openSky)
-            sunLit = max(sunLit, sunGain * kSunSpill * seepT * seepT);
+            sunLit = max(sunLit, sunGain * kSunSpill * skyT * skyT);
         // DOOM-0292: the AMBIENT share is gated on sky exposure as well. Both shares are
         // the sky's light, so both must ask whether this air can see any -- the difference
         // is only in what "see" means. The directional share asks a geometric question and
@@ -1174,7 +1183,7 @@ vec4 marchFog(vec3 ro, vec3 rd, float tHit, FogHit h)
         // destroy exactly the contrast L2 exists to produce.
         // DOOM-0650: kIndoorSkyLight lights sealed air that sees no sky, so it is light
         // with no source and goes with the sector light under sourcedLightOnly().
-        float skyLight = mix(sourcedLightOnly() ? 0.0 : kIndoorSkyLight, 1.0, seepT);
+        float skyLight = mix(sourcedLightOnly() ? 0.0 : kIndoorSkyLight, 1.0, skyT);
         // DOOM-0011 L4: mediumTint multiplies the SKY term only -- colour = light x medium
         // -- and it covers BOTH sky shares, so a shadowed hell interior tints the same as a
         // sunlit one, which is what a coloured medium does. Before kSkyShaftStrength, so

@@ -59,6 +59,7 @@
 // tests/emissive_derive_test.cpp. Defines the `emis` namespace used below.
 #include "emissive_derive.h"
 #include "light_grid.h"     // DOOM-0652: the raster light grid
+#include "sky_vis.h"        // DOOM-0651: what outdoor air a fog cell can see
 #include "surface_derive.h"     // DOOM-0273: surf::kLiquidFlats, the surface-map derive
 
 // DOOM-0042 Ultra HD PBR materials. rb_materials.h is header-only (inline pure
@@ -330,6 +331,7 @@ extern "C" int stbi_write_png(const char* filename, int w, int h, int comp,
 // namespace would be a DIFFERENT function that is never defined.
 void UploadFogLightGrid(const std::vector<float>& grid, uint32_t cells);
 void BuildFogLightGrid();
+void BuildSkyVis();         // DOOM-0651
 
 namespace {
 
@@ -954,6 +956,17 @@ struct VulkanState
     VkImage               seepImage    = VK_NULL_HANDLE;
     VkDeviceMemory        seepMemory   = VK_NULL_HANDLE;
     VkImageView           seepView     = VK_NULL_HANDLE;
+    // DOOM-0651: per cell, how much outdoor air it can see (RB_SkyVisCell), R16F on the
+    // seep grid at binding 7. The seep image's four channels are full. Goes stale on the
+    // fog lights' triggers (level load, a settled door) and is baked (BuildSkyVis) only
+    // while the room light is off. It reaches the GPU through the tail of the seep staging
+    // buffer.
+    VkImage               skyVisImage  = VK_NULL_HANDLE;
+    VkDeviceMemory        skyVisMemory = VK_NULL_HANDLE;
+    VkImageView           skyVisView   = VK_NULL_HANDLE;
+    std::vector<float>    seepVis;
+    bool                  skyVisStale  = false;   // the map changed; bake before next use
+    bool                  skyVisDirty  = false;   // baked; copy it when next traced
     VkBuffer              seepUbo      = VK_NULL_HANDLE;
     VkDeviceMemory        seepUboMem   = VK_NULL_HANDLE;
     void*                 seepUboMapped = nullptr;
@@ -2983,7 +2996,7 @@ static inline double CpuNowMs()
 // address), and the pathtrace.comp megakernel. RT-only; never called without it.
 void CreateRtComputePipeline()
 {
-    VkDescriptorSetLayoutBinding binds[7] = {};
+    VkDescriptorSetLayoutBinding binds[8] = {};
     binds[0].binding         = 0;   // TLAS
     binds[0].descriptorType  = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
     binds[0].descriptorCount = 1;
@@ -3020,8 +3033,12 @@ void CreateRtComputePipeline()
     binds[6].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
     binds[6].descriptorCount = 1;
     binds[6].stageFlags      = VK_SHADER_STAGE_COMPUTE_BIT;
+    binds[7].binding         = 7;   // DOOM-0651: outdoor air each seep cell can see (R16F)
+    binds[7].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    binds[7].descriptorCount = 1;
+    binds[7].stageFlags      = VK_SHADER_STAGE_COMPUTE_BIT;
 
-    CreateComputeSets(binds, 7, "rt", &g.rtDsLayout, &g.rtDsPool, { &g.rtDs });
+    CreateComputeSets(binds, 8, "rt", &g.rtDsLayout, &g.rtDsPool, { &g.rtDs });
 
     // Push constant: 4x vec4 (camera) + 5x uvec4 (mode/w/h/numWall, emitter+probe
     // counts, verify seed/spp/estimator, DOOM-0100 sprite base + omni-emitter start +
@@ -3934,6 +3951,9 @@ void UploadSeepField(rb_seep_t* f)
     if (g.seepView)   { vkDestroyImageView(g.device, g.seepView, nullptr);  g.seepView   = VK_NULL_HANDLE; }
     if (g.seepImage)  { vkDestroyImage(g.device, g.seepImage, nullptr);     g.seepImage  = VK_NULL_HANDLE; }
     if (g.seepMemory) { vkFreeMemory(g.device, g.seepMemory, nullptr);      g.seepMemory = VK_NULL_HANDLE; }
+    if (g.skyVisView)   { vkDestroyImageView(g.device, g.skyVisView, nullptr); g.skyVisView   = VK_NULL_HANDLE; }
+    if (g.skyVisImage)  { vkDestroyImage(g.device, g.skyVisImage, nullptr);    g.skyVisImage  = VK_NULL_HANDLE; }
+    if (g.skyVisMemory) { vkFreeMemory(g.device, g.skyVisMemory, nullptr);     g.skyVisMemory = VK_NULL_HANDLE; }
 
     // Staging for that refresh, sized to this level's grid and left mapped. One copy
     // is enough: the RT path is single-frame-in-flight and records after waiting
@@ -3942,7 +3962,8 @@ void UploadSeepField(rb_seep_t* f)
     if (g.seepStaging)    { vkDestroyBuffer(g.device, g.seepStaging, nullptr); g.seepStaging = VK_NULL_HANDLE; }
     if (g.seepStagingMem) { vkFreeMemory(g.device, g.seepStagingMem, nullptr); g.seepStagingMem = VK_NULL_HANDLE; }
     {
-        const VkDeviceSize bytes = (VkDeviceSize)w * h * 4 * sizeof(uint16_t);
+        // Four channels of seep, then DOOM-0651's one channel of visibility.
+        const VkDeviceSize bytes = (VkDeviceSize)w * h * 5 * sizeof(uint16_t);
         CreateRtBuffer(bytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
                        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
                        &g.seepStaging, &g.seepStagingMem, "seep staging");
@@ -3957,6 +3978,16 @@ void UploadSeepField(rb_seep_t* f)
     CreateSampledImage(w, h, VK_FORMAT_R16G16B16A16_SFLOAT, texels.data(),
                        (VkDeviceSize)w * h * 4 * sizeof(uint16_t),
                        &g.seepImage, &g.seepMemory, &g.seepView);
+    // DOOM-0651: 1 until BuildSkyVis has run, which leaves the fog as it was before.
+    g.seepVis.assign((size_t)w * h, 1.0f);
+    g.skyVisStale = haveField;
+    g.skyVisDirty = false;
+    {
+        std::vector<uint16_t> ones((size_t)w * h, FloatToHalf(1.0f));
+        CreateSampledImage(w, h, VK_FORMAT_R16_SFLOAT, ones.data(),
+                           (VkDeviceSize)w * h * sizeof(uint16_t),
+                           &g.skyVisImage, &g.skyVisMemory, &g.skyVisView);
+    }
 
     // The transform is per-level runtime data, so it can be neither a compile-time
     // const nor a push lane (that block is full -- INV-5). 32 bytes, created once.
@@ -4001,7 +4032,10 @@ void UploadSeepField(rb_seep_t* f)
     bufInfo.offset = 0;
     bufInfo.range  = 8 * sizeof(float);
 
-    VkWriteDescriptorSet writes[2] = {};
+    VkDescriptorImageInfo visInfo = imgInfo;
+    visInfo.imageView = g.skyVisView;
+
+    VkWriteDescriptorSet writes[3] = {};
     writes[0].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
     writes[0].dstSet          = g.rtDs;
     writes[0].dstBinding      = 4;
@@ -4014,7 +4048,13 @@ void UploadSeepField(rb_seep_t* f)
     writes[1].descriptorCount = 1;
     writes[1].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     writes[1].pBufferInfo     = &bufInfo;
-    vkUpdateDescriptorSets(g.device, 2, writes, 0, nullptr);
+    writes[2].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[2].dstSet          = g.rtDs;
+    writes[2].dstBinding      = 7;
+    writes[2].descriptorCount = 1;
+    writes[2].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    writes[2].pImageInfo      = &visInfo;
+    vkUpdateDescriptorSets(g.device, 3, writes, 0, nullptr);
 }
 
 // DOOM-0281: keep the seep field honest while the map moves.
@@ -4045,6 +4085,43 @@ static const float kSeepEaseTau = 0.32f;   // seconds; ~95% of the way there in 
 static const float kFogLightSettle  = 0.15f;   // seconds of stillness before the re-bake
 static const float kFogLightMaxWait = 4.0f;    // ...or bake anyway; a crusher never settles
 
+// Copy `offset` onward in the seep staging buffer into one of the seep-grid images.
+static void RecordSeepStagingCopy(VkCommandBuffer cb, VkImage image, VkDeviceSize offset)
+{
+    // Copy into the EXISTING image. Recreating it (the level-load path) would need the
+    // device drained first, and a drain mid-play is a visible hitch; the grid cannot
+    // change size within a level, so there is nothing to reallocate.
+    VkImageMemoryBarrier b = {};
+    b.sType               = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    b.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    b.image               = image;
+    b.subresourceRange    = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+    b.oldLayout           = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    b.newLayout           = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    b.srcAccessMask       = VK_ACCESS_SHADER_READ_BIT;
+    b.dstAccessMask       = VK_ACCESS_TRANSFER_WRITE_BIT;
+    vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                         VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &b);
+
+    VkBufferImageCopy region = {};
+    region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    region.imageSubresource.layerCount = 1;
+    region.bufferOffset                = offset;
+    region.imageExtent                 = { g.seepW, g.seepH, 1 };
+    vkCmdCopyBufferToImage(cb, g.seepStaging, image,
+                           VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+
+    b.oldLayout     = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    b.newLayout     = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    b.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    b.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                         VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1, &b);
+}
+
+static bool RoomLightOff();
+
 void RecordSeepRefresh(VkCommandBuffer cb)
 {
     // The clock is read before any early-out, so `dt` is always one frame rather
@@ -4057,6 +4134,24 @@ void RecordSeepRefresh(VkCommandBuffer cb)
 
     if (!g.seepStaging || g.seepCur.empty())
         return;
+
+    // DOOM-0651: only the room-light-off fog reads the visibility, so only it pays for the
+    // bake; with the room light on, a settled door costs what it did. The new answer snaps
+    // rather than eases, as the clearance does: a door opening lets the light in at once.
+    if (g.skyVisStale && RoomLightOff())
+    {
+        g.skyVisStale = false;
+        BuildSkyVis();
+    }
+    if (g.skyVisDirty && g.skyVisImage)
+    {
+        g.skyVisDirty = false;
+        const size_t n   = (size_t)g.seepW * g.seepH;
+        uint16_t*    dst = (uint16_t*)g.seepStagingMapped + n * 4;
+        for (size_t i = 0; i < n; i++)
+            dst[i] = FloatToHalf(g.seepVis[i]);
+        RecordSeepStagingCopy(cb, g.skyVisImage, (VkDeviceSize)n * 4 * sizeof(uint16_t));
+    }
 
     // DOOM-0289. Declared OUTSIDE the dirty block: a multi-frame ease still needs its
     // copy on frames where nothing newly changed, so declaring it inside would stop
@@ -4228,36 +4323,7 @@ void RecordSeepRefresh(VkCommandBuffer cb)
     }
 
     PackSeepTexels((uint16_t*)g.seepStagingMapped);
-
-    // Copy into the EXISTING image. Recreating it (the level-load path) would need the
-    // device drained first, and a drain mid-play is a visible hitch; the grid cannot
-    // change size within a level, so there is nothing to reallocate.
-    VkImageMemoryBarrier b = {};
-    b.sType               = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-    b.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    b.image               = g.seepImage;
-    b.subresourceRange    = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
-    b.oldLayout           = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-    b.newLayout           = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-    b.srcAccessMask       = VK_ACCESS_SHADER_READ_BIT;
-    b.dstAccessMask       = VK_ACCESS_TRANSFER_WRITE_BIT;
-    vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-                         VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &b);
-
-    VkBufferImageCopy region = {};
-    region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    region.imageSubresource.layerCount = 1;
-    region.imageExtent                 = { g.seepW, g.seepH, 1 };
-    vkCmdCopyBufferToImage(cb, g.seepStaging, g.seepImage,
-                           VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
-
-    b.oldLayout     = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-    b.newLayout     = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-    b.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-    b.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-    vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT,
-                         VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1, &b);
+    RecordSeepStagingCopy(cb, g.seepImage, 0);
 }
 
 //
@@ -9126,6 +9192,68 @@ void UploadFogLightGrid(const std::vector<float>& grid, uint32_t cells)
 // after both the seep field (which owns the grid and its per-cell geometry) and the static
 // emitter set exist. Safe to call with neither: it uploads an empty grid, and the shader's
 // reach == 0 test then skips every slot, so the fog is exactly its pre-L3 self.
+// DOOM-0651: bake g.seepVis, how much outdoor air each seep cell can see
+// (RB_SkyVisCell). The fog's sky light is graded by the seep distance, which follows
+// open space round corners; this is the line-of-sight half. Open-sky cells read 1.
+// Roofed air the flood never reached reads 0 without testing: no outdoor air is
+// connected to it at all. Marked stale wherever the fog lights are re-baked, and baked
+// by RecordSeepRefresh -- the same sight-test window -- only while the room light is off.
+struct SkyVisCtx { const rb_seep_t* f; float tz; };
+
+static int SkyVisOutdoor(void* ctx, int ix, int iy)
+{
+    const rb_seep_t* f = static_cast<SkyVisCtx*>(ctx)->f;
+    return f->sky[(size_t)iy * f->w + ix] > 0.5f && RB_SeepCellAir(f, ix, iy, nullptr, nullptr);
+}
+
+static int SkyVisSight(void* ctx, float x, float y, int ix, int iy)
+{
+    const SkyVisCtx* c = static_cast<SkyVisCtx*>(ctx);
+    float fz, cz;
+    if (!RB_SeepCellAir(c->f, ix, iy, &fz, &cz))
+        return 0;
+    // Clamped as the fog-light bake's are (DOOM-0411): an unclamped cast past 32767
+    // overflows int.
+    auto toFixed = [](float v) {
+        return (int)(std::min(std::max(v, -32767.0f), 32767.0f) * 65536.0f);
+    };
+    return P_CheckSightTrace(toFixed(x), toFixed(y), toFixed(c->tz),
+                             toFixed(c->f->originX + ix * c->f->cell),
+                             toFixed(c->f->originY + iy * c->f->cell),
+                             toFixed(fz), toFixed(cz));
+}
+
+void BuildSkyVis()
+{
+    const rb_seep_t* f = g.seepField;
+    if (!f || g.seepVis.size() != (size_t)f->w * f->h)
+        return;
+    const double t0 = CpuNowMs();
+    int tested = 0, blind = 0;
+    for (int iy = 0; iy < f->h; iy++)
+    for (int ix = 0; ix < f->w; ix++)
+    {
+        const size_t c = (size_t)iy * f->w + ix;
+        float fz, cz;
+        if (f->sky[c] > 0.5f)                { g.seepVis[c] = 1.0f; continue; }
+        if (f->d[c] >= RB_SEEP_DMAX ||
+            !RB_SeepCellAir(f, ix, iy, &fz, &cz)) { g.seepVis[c] = 0.0f; continue; }
+        // The fog-light bake's test height: the knee-high indoor pool, inside the cell.
+        SkyVisCtx ctx = { f, fz + RB_FOG_LIGHT_TESTZ };
+        if (ctx.tz > cz - 4.0f) ctx.tz = fz + 0.5f * (cz - fz);
+        g.seepVis[c] = RB_SkyVisCell(ix, iy, f->w, f->h, f->cell, f->originX, f->originY,
+                                     SkyVisOutdoor, SkyVisSight, &ctx);
+        tested++;
+        if (g.seepVis[c] == 0.0f) blind++;
+    }
+    g.skyVisDirty = true;
+    // `blind` is the cheap proof: roofed air the flood reached that sees no outdoor air.
+    // Zero on a map with corridors means the sight test is passing everything.
+    printf("RB_Vulkan: DOOM-0651 fog sky view — %d seeped cells tested, %d see no outdoor air "
+           "(%.1f ms).\n", tested, blind, CpuNowMs() - t0);
+    fflush(stdout);
+}
+
 void BuildFogLightGrid()
 {
     const rb_seep_t* f = g.seepField;
@@ -9137,6 +9265,8 @@ void BuildFogLightGrid()
         UploadFogLightGrid(grid, cells);
         return;
     }
+
+    g.skyVisStale = true;   // DOOM-0651: same triggers; RecordSeepRefresh bakes it
 
     const double t0     = CpuNowMs();
     const auto   lights = ClusterStaticFogLights((int)g.staticWgt.size());
@@ -12953,6 +13083,9 @@ extern "C" void RB_Vulkan_Shutdown(void)
         if (g.seepView)     vkDestroyImageView(g.device, g.seepView, nullptr);
         if (g.seepImage)    vkDestroyImage(g.device, g.seepImage, nullptr);
         if (g.seepMemory)   vkFreeMemory(g.device, g.seepMemory, nullptr);
+        if (g.skyVisView)   vkDestroyImageView(g.device, g.skyVisView, nullptr);   // DOOM-0651
+        if (g.skyVisImage)  vkDestroyImage(g.device, g.skyVisImage, nullptr);
+        if (g.skyVisMemory) vkFreeMemory(g.device, g.skyVisMemory, nullptr);
         if (g.seepUbo)      vkDestroyBuffer(g.device, g.seepUbo, nullptr);
         if (g.seepUboMem)   vkFreeMemory(g.device, g.seepUboMem, nullptr);
         if (g.neeBuf)       vkDestroyBuffer(g.device, g.neeBuf, nullptr);   // DOOM-0653

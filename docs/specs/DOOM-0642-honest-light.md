@@ -201,6 +201,8 @@ B7 changes clauses in force elsewhere; each is amended in the same commit as the
 - DOOM-0455: `visorLitFade` reads `sect` against `BASE_SECTOR_DIM`.
 - DOOM-0183: `kPuddleGlow`.
 - DOOM-0009: the muzzle flash's `extralight` path in the rasterised view.
+- DOOM-0651: the traced fog's sky light follows sight (`skyT` in `pathtrace.comp`) only
+  under `sourcedLightOnly()`, because of INV-6. B7 makes it the default.
 - `docs/standards/renderer.md` and `CLAUDE.md`'s tier table, where they describe the light.
 
 ## 13. Cold-eyes loop log

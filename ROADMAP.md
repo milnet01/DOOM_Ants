@@ -21210,7 +21210,7 @@ in CLAUDE.md describes.
   Source: user-request-2026-11-21.
   Lanes: renderer.
 
-- 📋 [DOOM-0651] **Traced fog glows with sky light deep inside rooms that cannot see the sky.**
+- 🚧 [DOOM-0651] **Traced fog glows with sky light deep inside rooms that cannot see the sky.**
   User 2026-11-21, in the DOOM-0650 light lab: "the fog adds a little
   light even in pitch black rooms." Measured, Solid, traced view,
   E2M1 start `0 48 90`, every light off (-lightlab 0), view mean of 255:
@@ -21223,6 +21223,17 @@ in CLAUDE.md describes.
   with DOOM-0650: kIndoorSkyLight's floor (0.45) goes when the lab's
   room switch is off. Left: a fog sky term that follows what the air can
   see, not how near an opening it is. Pictures: Scratchpad d0650/fog.
+  Built 2026-11-23: each seep cell gets a visibility, the share of
+  32 directions that see outdoor air (sky_vis.h RB_SkyVisCell, sight by
+  P_CheckSightTrace; doubled, capped at 1). The fog's sky light and sun
+  spill use seepT times it, only under sourcedLightOnly(): DOOM-0642 INV-6
+  keeps the default look until B7, whose section 12 now lists it. Baked
+  only while the room light is off (3.3-5.9 ms, E2M1/E1M1, on a door's
+  settle). E2M1 `0 48 90`, -lightlab 0, fog High: 45.3 -> 7.8 (fog off
+  0.7). E1M1 start room, which sees the courtyard through one window:
+  51.5 -> 6.2. Room light on: unchanged within run noise (64.8-71.2).
+  Test: sky_vis_test. Close on the user's look. Pictures: Scratchpad
+  d0651/shots, d0651/open/cmp.png.
   **Layman:** Fog in a pitch-black room still glows grey, because the game guesses the room is near the open sky when it is not.
   Kind: fix.
   Source: user-report-2026-11-21.
