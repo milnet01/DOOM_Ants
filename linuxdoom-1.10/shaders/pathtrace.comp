@@ -33,6 +33,7 @@
 //
 #extension GL_EXT_ray_query              : require
 #extension GL_EXT_buffer_reference       : require
+#extension GL_EXT_buffer_reference_uvec2 : require   // DOOM-0653: NeeLists from seep.neeAddr
 #extension GL_EXT_scalar_block_layout    : require
 #extension GL_EXT_nonuniform_qualifier   : require
 #extension GL_GOOGLE_include_directive    : require   // shared pt_common.glsl
@@ -64,6 +65,7 @@ layout(set = 0, binding = 5) uniform SeepXform {
     vec2 origin;    // world XY of cell (0,0)'s CENTRE (inside the void ring)
     vec2 invCell;   // 1 / cell size (world units -> cells)
     vec2 dims;      // cell counts, as float, for the UV divide
+    uvec2 neeAddr;  // DOOM-0653: the traced view's NEE cell lists (NeeLists); 0 = none
 } seep;
 
 vec2 worldToSeepUV(vec2 worldXY)
@@ -97,6 +99,13 @@ int fogLightCell(vec2 worldXY)
     ivec2 c = ivec2(floor((worldXY - seep.origin) * seep.invCell + 0.5));
     c = clamp(c, ivec2(0), ivec2(seep.dims) - 1);
     return c.y * int(seep.dims.x) + c.x;
+}
+
+// DOOM-0653: the cell of the traced view's light lists (NeeLists) a hit at p reads, or
+// -1 when no lists are built, which makes shadeSurface's pick the global one alone.
+int neeCellAt(vec3 p)
+{
+    return any(notEqual(seep.neeAddr, uvec2(0u))) ? fogLightCell(p.xy) : -1;
 }
 
 // SVGF denoiser feed (set 2; DOOM-0009 build step 6). Mode 6 writes the G-buffer
@@ -1703,7 +1712,7 @@ void main()
                                   pc.emit, pc.matEmis, NEE_SAMPLES, h.addEmis,
                                   h.emisW,
                                   s.hitSec, pc.misc4.z, pc.emitSec, pc.reject,
-                                  sp.v, sp.rough, sp.f0, sp.setting, sp.ctrlFlags, spec, seed);
+                                  NeeLists(seep.neeAddr), neeCellAt(s.shadeP), sp.v, sp.rough, sp.f0, sp.setting, sp.ctrlFlags, spec, seed);
             L = primaryHitAddTerms(L, h, s, n, vb.v[i0 + 10u], h.albedo, sp, spec);   // display: keeps albedo
             L += spec;   // DOOM-0103: not multiplied by albedo, as the composite adds hspec
 
@@ -1752,6 +1761,7 @@ void main()
                 // lobe is on, at the roughness floor, seen along -dir (§4.2).
                 if (pc.misc3.z == 0u)
                     sum += directNEEVerify(hitP, n, albedo, pc.misc2.x, pc.misc4.y, pc.emit,
+                                           NeeLists(seep.neeAddr), neeCellAt(hitP),
                                            -dir, kSpecRoughMin, vec3(kSpecF0), 1u, mc.flags, seed);
                 else if (pc.misc3.z == 1u)
                     sum += directAllLights(hitP, n, albedo, pc.misc2.x, pc.misc4.y, pc.emit,
@@ -1866,7 +1876,7 @@ void main()
                                       1.0,   // addEmission is false here: the composite
                                              // re-adds emission from galbedo.a instead
                                       s.hitSec, pc.misc4.z, pc.emitSec, pc.reject,
-                                      sp.v, sp.rough, sp.f0, sp.setting, sp.ctrlFlags, spec, seed);
+                                      NeeLists(seep.neeAddr), neeCellAt(s.shadeP), sp.v, sp.rough, sp.f0, sp.setting, sp.ctrlFlags, spec, seed);
             // Demodulated: the composite re-applies albedo, so modAlbedo is vec3(1.0).
             illum = primaryHitAddTerms(illum, h, s, n, vb.v[i0 + 10u], vec3(1.0), sp, spec);
 

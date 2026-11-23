@@ -1234,6 +1234,20 @@ struct VulkanState
     // only its lights' colours (RefreshStaticLightColours).
     bool                    staticLightLeDirty = false;
     std::vector<float>      prevStaticEmit;      // the previous build, for that comparison
+    // DOOM-0653: the traced view's NEE cell lists (lgrid::BuildNeeCellLists). A static
+    // grid rebuild keeps their inputs and raises neeDirty; the next traced frame builds
+    // them (BuildNeeLists), so the rasterised view never pays for them. One host-visible
+    // device-address buffer; the megakernel finds it through the seep UBO's neeAddr.
+    // Written only with the device idle, since it is rebuilt rarely (a level load, a
+    // light-lab switch, a switch press).
+    bool                    neeDirty = false;
+    std::vector<float>      neeCx, neeCy;        // the clusters' centres
+    std::vector<int32_t>    neeEmitCluster;      // each static emitter's cluster, -1 none
+    std::vector<uint32_t>   neeLists;
+    VkBuffer                neeBuf    = VK_NULL_HANDLE;
+    VkDeviceMemory          neeMem    = VK_NULL_HANDLE;
+    void*                   neeMapped = nullptr;
+    VkDeviceSize            neeBytes  = 0;
     // DOOM-0437: this frame's dynamic emitter records and sectors, kept in RAM beside the
     // mapped copies FinalizeEmitters writes. BuildRasterPointLights reads them once per
     // subsector per emitter; reading the mapped buffers there cost ~1.4 ms a frame.
@@ -3945,19 +3959,21 @@ void UploadSeepField(rb_seep_t* f)
                        &g.seepImage, &g.seepMemory, &g.seepView);
 
     // The transform is per-level runtime data, so it can be neither a compile-time
-    // const nor a push lane (that block is full -- INV-5). 24 bytes, created once.
+    // const nor a push lane (that block is full -- INV-5). 32 bytes, created once.
     if (!g.seepUbo)
     {
-        CreateRtBuffer(6 * sizeof(float), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+        CreateRtBuffer(8 * sizeof(float), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
                        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
                        &g.seepUbo, &g.seepUboMem, "seep ubo");
         Check(vkMapMemory(g.device, g.seepUboMem, 0, VK_WHOLE_SIZE, 0, &g.seepUboMapped),
               "vkMapMemory(seep ubo)");
+        std::memset(g.seepUboMapped, 0, 8 * sizeof(float));   // neeAddr 0: no NEE lists yet
     }
 
     {
-        // Must match `SeepXform` in pathtrace.comp, in this order: three vec2s,
-        // std140-safe at this size (8-byte aligned members, 24 bytes total).
+        // Must match `SeepXform` in pathtrace.comp, in this order: three vec2s, then
+        // DOOM-0653's neeAddr (UploadNeeLists writes it), std140-safe at this size
+        // (8-byte aligned members, 32 bytes total).
         float* x = (float*)g.seepUboMapped;
         // `origin` is the PADDED grid's cell-(0,0) CENTRE, one full cell outside the
         // map's bounding box -- not the map's minimum corner. Feed it the un-padded
@@ -3983,7 +3999,7 @@ void UploadSeepField(rb_seep_t* f)
     VkDescriptorBufferInfo bufInfo = {};
     bufInfo.buffer = g.seepUbo;
     bufInfo.offset = 0;
-    bufInfo.range  = 6 * sizeof(float);
+    bufInfo.range  = 8 * sizeof(float);
 
     VkWriteDescriptorSet writes[2] = {};
     writes[0].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
@@ -8378,9 +8394,14 @@ static void RasterLightColour(const float* Le, float reach, float out[3])
 // DOOM-0011 L3 clusters.
 // [0, staticN) only — INV-2. Dynamic sprite emitters (flying fireballs, the muzzle flash,
 // the flashlight) must never scatter, and they are also not knowable at bake time.
-static std::vector<RbLightCluster> ClusterStaticLights(int staticN, bool bySector, float lattice)
+// emitCluster, when given, gets each static emitter's cluster index, -1 for a degenerate
+// triangle (DOOM-0653's per-emitter cluster id).
+static std::vector<RbLightCluster> ClusterStaticLights(int staticN, bool bySector, float lattice,
+                                                       std::vector<int32_t>* emitCluster = nullptr)
 {
     std::vector<RbLightCluster> out;
+    if (emitCluster)
+        emitCluster->assign((size_t)std::max(staticN, 0), -1);
     if (staticN <= 0 || !g.emitMapped)
         return out;
     // DOOM-0390: g.staticEmit, the RAM array nee_merge_emitters copies static-first into
@@ -8453,6 +8474,8 @@ static std::vector<RbLightCluster> ClusterStaticLights(int staticN, bool bySecto
         }
         else
             ci = it->second;
+        if (emitCluster)
+            (*emitCluster)[(size_t)e] = ci;
 
         // DOOM-0330: pools get their fog-only gain here, per TRIANGLE rather than per
         // cluster, so a cell that mixes goo with a wall panel scales only the goo's share.
@@ -8642,8 +8665,15 @@ static lgrid::ListStats ListStaticLights()
 // wall and flat lights, their polar wall maps, and each cell's list of every one that can
 // reach it. Runs when the static emitter set or its Le changes (g.staticLightsDirty,
 // g.staticLightLeDirty) and when the seep grid it shares appears or changes shape.
+// DOOM-0653: it also keeps the clusters for the traced view's NEE cell lists and marks
+// them for rebuilding (BuildNeeLists). An Le-only change keeps them: the pick reads its own
+// stored pdfs, so a stale list costs noise, not bias.
 static void RebuildStaticLightGrid(int staticN)
 {
+    g.neeDirty = true;
+    g.neeCx.clear();
+    g.neeCy.clear();
+    g.neeEmitCluster.clear();
     g.staticLightsDirty  = false;
     g.staticLightLeDirty = false;
     g.rasterGridGen++;
@@ -8665,7 +8695,9 @@ static void RebuildStaticLightGrid(int staticN)
     // surface, coloured with the sum of its triangles' raster colours (spec 4.1).
     static const float RASTER_LIGHT_LIFT = 2.0f;
     g.rasterBySector = !g.subSecSector.empty();
-    const auto clusters = ClusterStaticLights(staticN, g.rasterBySector, RASTER_LIGHT_CLUSTER);
+    std::vector<int32_t> emitCluster;
+    const auto clusters = ClusterStaticLights(staticN, g.rasterBySector, RASTER_LIGHT_CLUSTER,
+                                              &emitCluster);
     g.rasterLightsAt = 0;
     g.rasterClusterLight.assign(clusters.size(), -1);
     for (size_t ci = 0; ci < clusters.size(); ci++)
@@ -8711,6 +8743,88 @@ static void RebuildStaticLightGrid(int staticN)
            f->originY + (float)(st.worstCell / (size_t)f->w) * f->cell,
            lgrid::RASTER_CELL_LIGHTS, st.overflow, g.rasterWalls.size(), tP1 - tP0, CpuNowMs() - t0);
     fflush(stdout);
+
+    // DOOM-0653: the clusters the traced view's NEE lists rank (BuildNeeLists).
+    for (const RbLightCluster& c : clusters) { g.neeCx.push_back(c.x); g.neeCy.push_back(c.y); }
+    g.neeEmitCluster.swap(emitCluster);
+}
+
+static void UploadNeeLists();
+
+// DOOM-0653 spec 4.1: build the traced view's NEE cell lists when the static grid changed,
+// and upload them. The clusters are the raster grid's; each cell ranks them by their
+// estimate there, and a cluster's raster polar map culls the cells it cannot reach.
+static void BuildNeeLists()
+{
+    if (!g.neeDirty)
+        return;
+    g.neeDirty = false;
+    g.neeLists.clear();
+    const rb_seep_t* f = g.seepField;
+    const int neN = std::min((int)g.neeEmitCluster.size(), (int)g.staticWgt.size());
+    if (g.rasterGrid.w > 0 && f && !g.neeCx.empty())
+    {
+        const double t0 = CpuNowMs();
+        const lgrid::ListStats ns = lgrid::BuildNeeCellLists(g.rasterGrid, g.neeCx.data(),
+            g.neeCy.data(), (int)g.neeCx.size(), g.neeEmitCluster.data(), g.staticWgt.data(), neN,
+            lgrid::NEE_CELL_LIGHTS, g.neeLists,
+            [](size_t c, uint32_t ci) {
+                const int32_t li = ci < g.rasterClusterLight.size() ? g.rasterClusterLight[ci] : -1;
+                if (li < 0)
+                    return true;                 // no raster light: listed on distance alone
+                const lgrid::Light2D& l = g.rasterStaticL2[(size_t)li];
+                const lgrid::Grid& gr = g.rasterGrid;
+                if (!(lgrid::BoxDist(gr, (int)(c % (size_t)gr.w), (int)(c / (size_t)gr.w), l.x, l.y) < l.range))
+                    return true;                 // past its map's range
+                // In range: the cell's raster list already holds every static light its
+                // polar map lets reach the cell (ListStaticLights), in light order.
+                if (2 * c + 1 >= g.rasterCells.size())
+                    return true;
+                const uint32_t* first = &g.rasterStatic[g.rasterIdxAt + g.rasterCells[2 * c]];
+                return std::binary_search(first, first + g.rasterCells[2 * c + 1], (uint32_t)li);
+            });
+        printf("RB_Vulkan: DOOM-0653 NEE cell lists — %zu clusters over %d emitters, at most %u "
+               "clusters in range of a cell, near (%.0f, %.0f) (cap %u, at most %u cells cut), "
+               "%zu KiB, %.1f ms.\n",
+               g.neeCx.size(), neN, ns.worst,
+               f->originX + (float)(ns.worstCell % (size_t)f->w) * f->cell,
+               f->originY + (float)(ns.worstCell / (size_t)f->w) * f->cell,
+               lgrid::NEE_CELL_LIGHTS, ns.overflow, g.neeLists.size() * sizeof(uint32_t) / 1024,
+               CpuNowMs() - t0);
+        fflush(stdout);
+    }
+    UploadNeeLists();
+}
+
+// DOOM-0653: copy g.neeLists to the GPU buffer and point the seep UBO's neeAddr at it; no
+// lists sets the address to 0. The megakernel may be reading both, and this runs only on a
+// rebuild, so it waits for the device rather than double-buffering.
+static void UploadNeeLists()
+{
+    if (!g.device || !g.seepUboMapped)
+        return;
+    Check(vkDeviceWaitIdle(g.device), "vkDeviceWaitIdle(nee lists)");
+    uint64_t addr = 0;
+    const VkDeviceSize bytes = (VkDeviceSize)g.neeLists.size() * sizeof(uint32_t);
+    if (bytes > 0)
+    {
+        if (g.neeBytes < bytes)
+        {
+            if (g.neeBuf) vkDestroyBuffer(g.device, g.neeBuf, nullptr);
+            if (g.neeMem) vkFreeMemory(g.device, g.neeMem, nullptr);
+            g.neeBytes = std::max<VkDeviceSize>(bytes + bytes / 2, 64 * 1024);
+            CreateRtBuffer(g.neeBytes,
+                VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+                VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                &g.neeBuf, &g.neeMem, "nee lists",
+                VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);   // read per sample; the CPU only writes it
+            Check(vkMapMemory(g.device, g.neeMem, 0, VK_WHOLE_SIZE, 0, &g.neeMapped),
+                  "vkMapMemory(nee lists)");
+        }
+        std::memcpy(g.neeMapped, g.neeLists.data(), (size_t)bytes);
+        addr = BufferAddress(g.neeBuf);
+    }
+    std::memcpy((float*)g.seepUboMapped + 6, &addr, sizeof addr);   // SeepXform.neeAddr
 }
 
 // DOOM-0652 B2: a plane moved, so re-read which lines block. Where a door shut or opened,
@@ -8814,21 +8928,21 @@ static void EnsureLightSlot(VkDeviceSize bytes)
     g.lightMapped = g.lightMappedSlot[s];
 }
 
-// DOOM-0652 spec 4.3: fill this frame's raster light grid. The static part is copied
-// only when it changed since this slot last held it; the moving lights (lamps, torches,
-// pickups, fireballs: one light per emitter record, as before) are listed each frame in
-// the cells their range reaches.
-void BuildRasterPointLights()
+// The static emitter count this frame's merged buffer holds (over-cap merges clamp it).
+static int StaticLightCount()
+{
+    return std::min((int)g.staticWgt.size(), (int)g.emitCount);
+}
+
+// DOOM-0652/0653: keep the static light grid, and with it the traced view's NEE cell
+// lists, current: rebuild it when the static set or the seep grid changed, rewrite its
+// colours when only Le did, and redraw wall maps a shut or opened door changed. Both
+// views call it each frame.
+static void UpdateStaticLightGrid()
 {
     if (!g.lightMapped || g.probeCount == 0)
         return;
-    const int emitN   = (int)g.emitCount;
-    int       staticN = (int)g.staticWgt.size();
-    if (staticN > emitN) staticN = emitN;          // clamp (over-cap merge)
-    // This frame's moving sprite emitters. frameDynEmit holds every one FinalizeEmitters
-    // merged, so the min never bites; it keeps a mismatch from reading past the copy.
-    const int dynN = std::max(0, std::min(emitN - staticN, (int)(g.frameDynEmit.size() / 14)));
-
+    const int staticN = StaticLightCount();
     const rb_seep_t* f = g.seepField;
     const bool moved = f ? (g.rasterGrid.w != f->w || g.rasterGrid.h != f->h ||
                             g.rasterGrid.ox != f->originX || g.rasterGrid.oy != f->originY ||
@@ -8840,6 +8954,22 @@ void BuildRasterPointLights()
         RefreshStaticLightColours(staticN);
     if (g.rasterWallsDirty && g.rasterGrid.w > 0)
         RefreshRasterWalls();
+}
+
+// DOOM-0652 spec 4.3: fill this frame's raster light grid. The static part is copied
+// only when it changed since this slot last held it; the moving lights (lamps, torches,
+// pickups, fireballs: one light per emitter record, as before) are listed each frame in
+// the cells their range reaches.
+void BuildRasterPointLights()
+{
+    if (!g.lightMapped || g.probeCount == 0)
+        return;
+    UpdateStaticLightGrid();
+    const int emitN   = (int)g.emitCount;
+    const int staticN = StaticLightCount();
+    // This frame's moving sprite emitters. frameDynEmit holds every one FinalizeEmitters
+    // merged, so the min never bites; it keeps a mismatch from reading past the copy.
+    const int dynN = std::max(0, std::min(emitN - staticN, (int)(g.frameDynEmit.size() / 14)));
 
     uint32_t* out = (uint32_t*)g.lightMapped;
     if (g.rasterGrid.w <= 0)
@@ -9365,6 +9495,11 @@ bool RB_RtVerify()
 {
     const uint32_t W = kVerifyW, H = kVerifyH;
     const uint32_t pxCount = W * H;
+
+    // DOOM-0653 spec 4.4: verify the shipped static pick, which needs the NEE cell lists.
+    // This runs on the first ready present, before any traced frame has built them.
+    UpdateStaticLightGrid();
+    BuildNeeLists();
 
     // Same camera basis RecordRtTrace builds, so the verify view is what the player
     // sees at the trigger frame. mode 5 (verify accumulate) + the scene addresses.
@@ -11389,6 +11524,8 @@ static void BuildFrameInputs(bool rtActive, bool cprof, bool doReheight)
         // DOOM-0084: append this frame's emissive sprites (lamps/torches/barrels)
         // to the NEE light list so they pool light onto their surroundings.
         BuildDynamicEmitters();
+        UpdateStaticLightGrid();    // DOOM-0653: the NEE cell lists follow the static set
+        BuildNeeLists();
     }
 
     if (doReheight)
@@ -12818,6 +12955,8 @@ extern "C" void RB_Vulkan_Shutdown(void)
         if (g.seepMemory)   vkFreeMemory(g.device, g.seepMemory, nullptr);
         if (g.seepUbo)      vkDestroyBuffer(g.device, g.seepUbo, nullptr);
         if (g.seepUboMem)   vkFreeMemory(g.device, g.seepUboMem, nullptr);
+        if (g.neeBuf)       vkDestroyBuffer(g.device, g.neeBuf, nullptr);   // DOOM-0653
+        if (g.neeMem)       vkFreeMemory(g.device, g.neeMem, nullptr);
         if (g.seepStaging)    vkDestroyBuffer(g.device, g.seepStaging, nullptr);   // DOOM-0281
         if (g.seepStagingMem) vkFreeMemory(g.device, g.seepStagingMem, nullptr);
         // DOOM-0011 L3: the per-cell torch list. Persistently mapped, so it unmaps here

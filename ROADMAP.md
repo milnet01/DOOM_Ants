@@ -1,6 +1,6 @@
 <!-- ants-roadmap-format: 1 -->
 <!-- Generated from the Ants Terminal roadmap store. Edit it with roadmap_log; hand edits are discarded by the next write. -->
-<!-- ants-roadmap-id-high-water: DOOM=655 -->
+<!-- ants-roadmap-id-high-water: DOOM=656 -->
 
 # Roadmap
 
@@ -19731,6 +19731,12 @@ in CLAUDE.md describes.
   the old pick's noise from bias at the courtyard; its B1 records it.
   Under Xvfb (not cage) -rtverify hung for 27 minutes and ignored
   timeout's TERM; run it under xwfb-run cage.
+  2026-11-23, DOOM-0653 B1 (shipped static pick now verified):
+  courtyard -warpto 1833 -3622 107 -lightlab 3: 5.2711% FAIL (was
+  62.9448% on the global pick), so most of that failure was the old
+  pick's noise; what is left is unexplained. E3M6 default start, all
+  lights: 99.9967% FAIL on B1 and 100.0012% on the pre-B1 binary, so
+  not B1's; 124 sprite lights are in the verify path there.
   **Layman:** The ray tracer's built-in self-test only passes at the level's start; run elsewhere it reports a failure that may be real or may be the test's own limit.
   Kind: investigate.
   Source: found-2026-11-09-DOOM-0565.
@@ -21347,10 +21353,37 @@ in CLAUDE.md describes.
   speckle, E1M1, -rtview 4, wall and flat lights only: start room
   77.26, courtyard 24.29 specks per 1000 dim pixels (Scratchpad
   d0653/speck.py); lamps alone 7.57. The static pick makes the grain.
+  B1 built 2026-11-23 (Scratchpad d0653, binary b1dev). E1M1,
+  -rtview 4, -lightlab 3: start room 77.26 -> 4.28 specks per 1000
+  dim px (INV-5 bar 38.6, met); courtyard 24.29 -> 13.86 (bar 12.1,
+  missed: B2 tunes). Mean brightness kept (start 8.15 -> 8.47,
+  courtyard 60.9 -> 61.4; less firefly-clamp loss). INV-1: rv.sh
+  lab3 0.0125% PASS (was 0.2027%), now on the shipped pick. INV-7:
+  raster start room 0 px differ; courtyard differs only on the
+  animated nukage. Lists built lazily on the first traced frame or
+  -rtverify, so Solid's raster view never pays. 68 IWAD maps load,
+  0 errors; up to 448 clusters in range of a cell (MAP24), so the 32
+  cap cuts most cells and the global share covers the rest. Build
+  time, real display (cage): E1M1 9.8 ms, E3M6 24.0, MAP24 26.2:
+  over the spec 6 budget of 20 ms on MAP24, owed to B2. Found:
+  shader rnd() can return exactly 1.0, which sent an empty list to
+  the cluster draw (GPU fault); fixed, nee_sampling_test holds it.
   **Layman:** In the ray-traced view, dark corners look grainy because the game spends its light samples on bright lamps far away instead of the ones nearby.
   Kind: fix.
   Source: user-2026-11-21 (light lab handoff).
   Lanes: renderer.
+
+- 📋 [DOOM-0656] **-rtverify on MAP24 exits with code 247 and prints no verdict.**
+  Found 2026-11-23. Scratchpad d0653/rvmap.sh (rv.sh with IWAD= and
+  WARP=), IWAD=doom2.wad WARP=24, private cage display: the log ends
+  after the light grid lines, with no [rtverify] lines and no error,
+  exit 247. Same on the pre-DOOM-0653 binary (d0653/dev), so older
+  than DOOM-0653. Refute: run it under a debugger or with ASAN and
+  see where it exits.
+  **Layman:** The ray tracer's self-test quits without an answer on one Doom II level.
+  Kind: investigate.
+  Source: found-2026-11-23-DOOM-0653.
+  Lanes: renderer, tests.
 
 ## 0.13.0 — The player's experience
 

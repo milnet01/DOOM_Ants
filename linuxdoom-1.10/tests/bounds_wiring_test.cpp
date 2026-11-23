@@ -920,7 +920,7 @@ int main()
             {
                 std::string compact;                       // whitespace removed: spacing-proof
                 for (char ch : b) if (!std::isspace((unsigned char)ch)) compact += ch;
-                bool cdfMaxRead = false, uDraw = false, pdfDiv = false, named = false;
+                bool cdfMaxRead = false, named = false, passed = false;
                 for (size_t st = 0; st < compact.size();)
                 {
                     size_t semi = compact.find(';', st);
@@ -932,20 +932,40 @@ int main()
                         stmt.find("omniStart-1u") != std::string::npos &&
                         stmt.find("12u") != std::string::npos)
                         cdfMaxRead = true;
-                    if (stmt.find("u=rnd(seed)") != std::string::npos &&
+                    if (stmt.find("neePickStatic(") != std::string::npos &&
                         stmt.find("cdfMax") != std::string::npos)
-                        uDraw = true;
-                    if (stmt.find("pdf=") != std::string::npos &&
-                        stmt.find("13u") != std::string::npos &&
-                        stmt.find("cdfMax") != std::string::npos)
-                        pdfDiv = true;
+                        passed = true;
                 }
                 check(named, "DOOM-0377: shadeSurface names cdfMax");
                 check(cdfMaxRead,
                       "DOOM-0377: cdfMax is read from slot 12 of record omniStart - 1u");
-                check(uDraw, "DOOM-0377: the static draw of u (rnd(seed)) is scaled by cdfMax");
+                check(passed, "DOOM-0377: shadeSurface hands cdfMax to its static pick (neePickStatic)");
+            }
+            // DOOM-0653 moved the draw itself into neePickStatic: its global draw scales u
+            // by cdfMax and divides the slot-13 pdf by it.
+            if (get_body("pt_common.glsl", ptc, "neePickStatic", &b))
+            {
+                std::string compact;
+                for (char ch : b) if (!std::isspace((unsigned char)ch)) compact += ch;
+                bool uDraw = false, pdfDiv = false;
+                for (size_t st = 0; st < compact.size();)
+                {
+                    size_t semi = compact.find(';', st);
+                    if (semi == std::string::npos) semi = compact.size();
+                    const std::string stmt = compact.substr(st, semi - st);
+                    st = semi + 1;
+                    if (stmt.find("u=(u0/a)*cdfMax") != std::string::npos)
+                        uDraw = true;
+                    if (stmt.find("pg=") != std::string::npos &&
+                        stmt.find("13u") != std::string::npos &&
+                        stmt.find("cdfMax") != std::string::npos)
+                        pdfDiv = true;
+                }
+                check(uDraw, "DOOM-0377: the static draw of u is scaled by cdfMax");
                 check(pdfDiv, "DOOM-0377: the pdf read from slot 13u is divided by cdfMax");
             }
+            else
+                check(false, "DOOM-0377: pt_common.glsl still defines neePickStatic");
         }
 
         // ---- DOOM-0378: the packed view depth (DIRECT alpha) tells sprites, the weapon

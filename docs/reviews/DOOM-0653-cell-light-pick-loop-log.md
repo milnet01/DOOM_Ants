@@ -7,3 +7,4 @@ nobody has reviewed it.
 
 | Loop | Date | Lanes | Q1 | Q2 | Q3 | Q4 | Outcome |
 |------|------|-------|----|----|----|----|---------|
+| impl (B1) | 2026-11-23 | none dispatched | - | - | - | - | Amended §§ 4.3, 5, 11 to the built B1: lists also rebuilt from the traced view, kept on an Le-only change; layout in nee_sampling.h; only NEE_GLOBAL_FRAC and the layout mirrored. Not a review. |

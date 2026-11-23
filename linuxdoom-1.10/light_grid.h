@@ -14,9 +14,11 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <utility>
 #include <vector>
 
+#include "nee_sampling.h"   // DOOM-0653: the lists' layout and nee_build_cdf
 #include "seep_dist.h"   // RB_SeepPointSegDist (B2's wall range test)
 
 namespace lgrid {
@@ -591,6 +593,205 @@ inline bool ProbeBlendSH(const float* buf, float px, float py, float pz, float s
     if (wSum > 0.0f)      for (int k = 0; k < 12; k++) sh[k] = sum[k] / wSum;
     else if (wAll > 0.0f) for (int k = 0; k < 12; k++) sh[k] = all[k] / wAll;
     return wAll > 0.0f;
+}
+
+// ---------------------------------------------------------------------------------------
+// DOOM-0653 (spec 4.1): the traced view's per-cell light lists. Each cell lists the static
+// light clusters that reach it, ranked by their estimate there, and the megakernel draws
+// most of its static-light samples from that list (nee_sampling.h, the mixture pick).
+// ---------------------------------------------------------------------------------------
+
+// Clusters listed per cell. Sized from the worst cell over every IWAD map (spec 7 B1).
+static const uint32_t NEE_CELL_LIGHTS = 32;
+// The estimate's distance floor, so a cluster at the cell does not take its whole list.
+static const float    NEE_NEAR        = 64.0f;
+// No cluster further than this from a cell's box is listed in it.
+static const float    NEE_LIST_RANGE  = 2048.0f;
+// Cells ranked together by BuildNeeCellLists, per side (a speed setting: the lists do not
+// depend on it).
+static const int      NEE_BLOCK       = 8;
+
+inline uint32_t NeeBits(float f) { uint32_t u; std::memcpy(&u, &f, sizeof u); return u; }
+
+// Fill `out` with the lists' buffer (nee_sampling.h's layout) for grid g. Cluster ci's
+// centre is (cx[ci], cy[ci]); static emitter e belongs to cluster emitCluster[e] (-1 for
+// none) and has power emitW[e], the weight the global cdf uses. A cluster's power is the
+// sum of its emitters'. Its estimate at a cell is power / max(d^2, NEE_NEAR^2), d the 2D
+// distance from its centre to the cell's box, and see(cell, ci) false makes it 0 (the
+// raster polar map's cull). A cell keeps its `cap` largest estimates above 0, ties to the
+// lower cluster id, sorted by cluster id. The stats are upper bounds, from the clusters in
+// range of each cell's NEE_BLOCK square before the cull and the cap: the largest such
+// count, and the cells whose count is over the cap.
+template <class See = KeepAll>
+inline ListStats BuildNeeCellLists(const Grid& g, const float* cx, const float* cy, int nc,
+                                   const int32_t* emitCluster, const float* emitW, int ne,
+                                   uint32_t cap, std::vector<uint32_t>& out,
+                                   const See& see = See())
+{
+    ListStats st;
+    const size_t cells = (g.cell > 0.0f) ? (size_t)std::max(g.w, 0) * (size_t)std::max(g.h, 0) : 0;
+    nc = std::max(nc, 0);
+    ne = std::max(ne, 0);
+
+    // Clusters' members, grouped by cluster in emitter order, with their in-cluster cdf.
+    std::vector<uint32_t> first((size_t)nc + 1, 0u);
+    std::vector<double>   power((size_t)nc, 0.0);
+    for (int e = 0; e < ne; e++)
+    {
+        const int32_t c = emitCluster[e];
+        if (c < 0 || c >= nc) continue;
+        first[(size_t)c + 1]++;
+        power[(size_t)c] += (double)std::max(emitW[e], 0.0f);
+    }
+    for (int c = 0; c < nc; c++) first[(size_t)c + 1] += first[(size_t)c];
+    std::vector<uint32_t> member(first[(size_t)nc]);
+    {
+        std::vector<uint32_t> fill(first.begin(), first.end() - 1);
+        for (int e = 0; e < ne; e++)
+        {
+            const int32_t c = emitCluster[e];
+            if (c >= 0 && c < nc) member[fill[(size_t)c]++] = (uint32_t)e;
+        }
+    }
+    std::vector<float> triCdf(member.size()), inPdf((size_t)ne, 0.0f), w, cdf, pdf;
+    for (int c = 0; c < nc; c++)
+    {
+        const uint32_t a = first[(size_t)c], n = first[(size_t)c + 1] - a;
+        if (n == 0) continue;
+        w.resize(n); cdf.resize(n); pdf.resize(n);
+        for (uint32_t k = 0; k < n; k++) w[k] = std::max(emitW[member[a + k]], 0.0f);
+        nee_build_cdf(w.data(), (int)n, cdf.data(), pdf.data());
+        for (uint32_t k = 0; k < n; k++)
+        {
+            triCdf[a + k]            = cdf[k];
+            inPdf[member[a + k]]     = pdf[k];
+        }
+    }
+
+    // Lay the buffer out. A heap keeps each cell's cap best estimates so far, its worst at
+    // the front.
+    out.assign(NEE_HDR_WORDS, 0u);
+    out[NEE_HDR_CELLS]    = (uint32_t)cells;
+    out[NEE_HDR_EMITTERS] = (uint32_t)ne;
+    out[NEE_HDR_CLUSTERS] = (uint32_t)nc;
+    out[NEE_HDR_CELL_AT]  = (uint32_t)out.size();
+    out.resize(out.size() + 2 * cells, 0u);
+    std::vector<uint32_t> entries;
+    std::vector<int> live;                       // clusters with power
+    for (int c = 0; c < nc; c++) if (power[(size_t)c] > 0.0) live.push_back(c);
+    const float near2 = NEE_NEAR * NEE_NEAR, range2 = NEE_LIST_RANGE * NEE_LIST_RANGE;
+    // a before b: the larger estimate, ties to the lower id. As a heap order it puts the
+    // worst kept entry at the front.
+    auto better = [](const std::pair<float, uint32_t>& a, const std::pair<float, uint32_t>& b) {
+        return a.first != b.first ? a.first > b.first : a.second < b.second;
+    };
+    // Cells are ranked a block at a time. A block sorts its clusters by the largest
+    // estimate any of its cells could get, and each cell stops walking that order once no
+    // cluster left can beat its list's worst: the lists come out as a full scan would
+    // make them, at a fraction of the scan.
+    const int B = NEE_BLOCK;
+    std::vector<std::pair<float, uint32_t>> l, order;
+    std::vector<std::vector<uint32_t>> cellEntries(cells);
+    for (int by0 = 0; cells && by0 < g.h; by0 += B)
+    for (int bx0 = 0; bx0 < g.w; bx0 += B)
+    {
+        const int bx1 = std::min(bx0 + B, g.w) - 1, by1 = std::min(by0 + B, g.h) - 1;
+        const float hc = 0.5f * g.cell;
+        const float lx = g.ox + bx0 * g.cell - hc, hx = g.ox + bx1 * g.cell + hc;
+        const float ly = g.oy + by0 * g.cell - hc, hy = g.oy + by1 * g.cell + hc;
+        order.clear();
+        for (int c : live)
+        {
+            const float dx = std::max(std::max(lx - cx[c], cx[c] - hx), 0.0f);
+            const float dy = std::max(std::max(ly - cy[c], cy[c] - hy), 0.0f);
+            const float d2 = dx * dx + dy * dy;
+            if (!(d2 < range2)) continue;
+            order.emplace_back((float)(power[(size_t)c] / std::max(d2, near2)), (uint32_t)c);
+        }
+        std::sort(order.begin(), order.end(), better);
+        // The stats: clusters in range of the block, an upper bound for each of its cells.
+        const uint32_t inBlock = (uint32_t)order.size();
+        for (int iy = by0; iy <= by1; iy++)
+        for (int ix = bx0; ix <= bx1; ix++)
+        {
+            const size_t cell = (size_t)iy * g.w + ix;
+            if (inBlock > st.worst) { st.worst = inBlock; st.worstCell = cell; }
+            if (inBlock > cap) st.overflow++;
+            const float bx = g.ox + ix * g.cell, byc = g.oy + iy * g.cell;
+            l.clear();
+            for (const auto& o : order)
+            {
+                if (cap == 0) break;
+                // o.first bounds every estimate after it: once the list is full and its
+                // worst beats that bound, nothing later gets in.
+                if (l.size() >= cap && o.first < l.front().first) break;
+                const uint32_t c = o.second;
+                const float dx = std::max(std::fabs(cx[c] - bx) - hc, 0.0f);
+                const float dy = std::max(std::fabs(cy[c] - byc) - hc, 0.0f);
+                const float d2 = dx * dx + dy * dy;
+                if (!(d2 < range2)) continue;
+                const std::pair<float, uint32_t> e((float)(power[c] / std::max(d2, near2)), c);
+                if (!(e.first > 0.0f)) continue;
+                const bool full = l.size() >= cap;
+                if (full && !better(e, l.front())) continue;
+                if (!see(cell, c)) continue;     // the wall cull, only for a keeper
+                if (!full)
+                {
+                    l.push_back(e);
+                    std::push_heap(l.begin(), l.end(), better);
+                }
+                else
+                {
+                    std::pop_heap(l.begin(), l.end(), better);
+                    l.back() = e;
+                    std::push_heap(l.begin(), l.end(), better);
+                }
+            }
+            std::sort(l.begin(), l.end(), [](const std::pair<float, uint32_t>& a,
+                                             const std::pair<float, uint32_t>& b) {
+                return a.second < b.second;
+            });
+            if (l.empty()) continue;
+            w.resize(l.size()); cdf.resize(l.size()); pdf.resize(l.size());
+            for (size_t k = 0; k < l.size(); k++) w[k] = l[k].first;
+            nee_build_cdf(w.data(), (int)l.size(), cdf.data(), pdf.data());
+            std::vector<uint32_t>& ce = cellEntries[cell];
+            for (size_t k = 0; k < l.size(); k++)
+            {
+                ce.push_back(l[k].second);
+                ce.push_back(NeeBits(cdf[k]));
+                ce.push_back(NeeBits(pdf[k]));
+            }
+        }
+    }
+    for (size_t cell = 0; cell < cells; cell++)
+    {
+        out[NEE_HDR_WORDS + 2 * cell]     = (uint32_t)(entries.size() / NEE_ENTRY_WORDS);
+        out[NEE_HDR_WORDS + 2 * cell + 1] = (uint32_t)(cellEntries[cell].size() / NEE_ENTRY_WORDS);
+        entries.insert(entries.end(), cellEntries[cell].begin(), cellEntries[cell].end());
+    }
+    out[NEE_HDR_ENTRY_AT] = (uint32_t)out.size();
+    out.insert(out.end(), entries.begin(), entries.end());
+    out[NEE_HDR_CLUSTER_AT] = (uint32_t)out.size();
+    for (int c = 0; c < nc; c++)
+    {
+        out.push_back(first[(size_t)c]);
+        out.push_back(first[(size_t)c + 1] - first[(size_t)c]);
+    }
+    out[NEE_HDR_TRI_AT] = (uint32_t)out.size();
+    for (size_t k = 0; k < member.size(); k++)
+    {
+        out.push_back(member[k]);
+        out.push_back(NeeBits(triCdf[k]));
+    }
+    out[NEE_HDR_EMIT_AT] = (uint32_t)out.size();
+    for (int e = 0; e < ne; e++)
+    {
+        const int32_t c = emitCluster[e];
+        out.push_back(c >= 0 && c < nc ? (uint32_t)c : NEE_NO_CLUSTER);
+        out.push_back(NeeBits(inPdf[(size_t)e]));
+    }
+    return st;
 }
 
 }  // namespace lgrid

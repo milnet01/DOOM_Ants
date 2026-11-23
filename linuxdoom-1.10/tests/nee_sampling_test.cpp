@@ -14,6 +14,10 @@
 // rest of spec INV-6) lands at build step 4, when the integrator is complete and
 // a high-precision off-screen render target exists.
 //
+// DOOM-0653 (spec docs/specs/DOOM-0653-cell-light-pick.md): the per-cell mixture pick
+// (labels begin "DOOM-0653"): INV-2 every emitter keeps its global share, INV-3 the
+// mixture pdf sums to 1 and matches the realised picks, INV-4 no list picks as today.
+//
 // It also holds DOOM-0377: the static-light draw must be renormalised over the
 // static prefix of a merged (static + sprite) table (labels begin "DOOM-0377").
 //
@@ -21,6 +25,7 @@
 // suite; `make nee-test` builds and runs just this one for a fast iteration
 // loop. No WAD or GPU needed.
 #include "../nee_sampling.h"
+#include "../light_grid.h"
 #include "check_util.h"
 
 #include <cstdio>
@@ -296,6 +301,132 @@ static void check_static_prefix(const char* name, const std::vector<float>& w, i
     check(std::fabs(psum - 1.0) < 1e-4, msg);
 }
 
+// DOOM-0653: a synthetic static set of 7 emitters in 3 clusters (one emitter has none)
+// plus one sprite light, on a 3x1 grid. Cell 0 cannot see cluster 2, cell 1 sees all,
+// cell 2 sees none (an empty list).
+static void check_mixture()
+{
+    const std::vector<float> w = { 1.0f, 3.0f, 0.5f, 2.0f, 4.0f, 6.0f, 0.25f, 5.0f };
+    const int omniStart = 7, n = (int)w.size();
+    std::vector<float> cdf(n), pdf(n);
+    nee_build_cdf(w.data(), n, cdf.data(), pdf.data());
+    const float cdfMax = cdf[omniStart - 1];
+
+    const int32_t emitCluster[7] = { 0, 0, 1, 1, 1, 2, -1 };
+    const float   cx[3] = { 0.0f, 200.0f, 400.0f }, cy[3] = { 0.0f, 0.0f, 0.0f };
+    lgrid::Grid g;
+    g.ox = 0.0f; g.oy = 0.0f; g.cell = 128.0f; g.w = 3; g.h = 1;
+    std::vector<uint32_t> nee;
+    lgrid::BuildNeeCellLists(g, cx, cy, 3, emitCluster, w.data(), omniStart,
+                             lgrid::NEE_CELL_LIGHTS, nee,
+                             [](size_t cell, uint32_t c) { return cell == 1 || (cell == 0 && c != 2); });
+
+    // A general integrand, not proportional to the weights.
+    const double gfun[7] = { 1.3, 0.7, 2.9, 0.4, 1.1, 3.3, 0.9 };
+    double want = 0.0;
+    for (int k = 0; k < omniStart; k++) want += gfun[k];
+
+    for (int cell = 0; cell < 3; cell++)
+    {
+        uint32_t first;
+        const uint32_t count = nee_cell_list(nee.data(), cell, omniStart, &first);
+        char msg[256];
+        std::snprintf(msg, sizeof msg, "DOOM-0653 cell %d lists %u clusters (expected %d)",
+                      cell, count, cell == 0 ? 2 : cell == 1 ? 3 : 0);
+        check(count == (uint32_t)(cell == 0 ? 2 : cell == 1 ? 3 : 0), msg);
+
+        // INV-2 and INV-3's sum: the pdf the pick reports for each emitter.
+        double psum = 0.0;
+        bool keepsGlobal = true;
+        std::vector<double> p(omniStart);
+        for (int k = 0; k < omniStart; k++)
+        {
+            const float pg = pdf[k] / cdfMax;
+            p[k] = nee_mixture_pdf(nee.data(), first, count, k, pg);
+            psum += p[k];
+            const float a = count ? NEE_GLOBAL_FRAC : 1.0f;
+            if (pg > 0.0f && p[k] < a * pg * (1.0 - 1e-6)) keepsGlobal = false;
+        }
+        std::snprintf(msg, sizeof msg, "DOOM-0653 INV-2 cell %d: every emitter keeps a * pg", cell);
+        check(keepsGlobal, msg);
+        std::snprintf(msg, sizeof msg, "DOOM-0653 INV-3 cell %d: the mixture pdf sums to %.6f, expected 1",
+                      cell, psum);
+        check(std::fabs(psum - 1.0) < 1e-5, msg);
+
+        // INV-3: realised frequencies match p, the pick's own pdf agrees, and the
+        // estimator mean(g / p) is sum(g).
+        const long N = 1000000;
+        std::vector<long> hist(omniStart, 0);
+        uint32_t seed = 0xC0FFEEu + (uint32_t)cell;
+        bool pdfAgrees = true, inRange = true;
+        double est = 0.0, var = 0.0;
+        for (long s = 0; s < N; s++)
+        {
+            const float u0 = rnd(seed), u1 = rnd(seed);
+            float ps = 0.0f;
+            const int k = nee_pick_mixture(cdf.data(), pdf.data(), omniStart, nee.data(), cell,
+                                           u0, u1, &ps);
+            if (k < 0 || k >= omniStart) { inRange = false; continue; }
+            hist[k]++;
+            if (std::fabs(ps - p[k]) > 1e-6 * p[k]) pdfAgrees = false;
+            est += gfun[k] / ps;
+        }
+        est /= (double)N;
+        for (int k = 0; k < omniStart; k++)
+            if (p[k] > 0.0) var += gfun[k] * gfun[k] / p[k];
+        const double se = std::sqrt(std::fmax(var - want * want, 0.0) / (double)N);
+        bool freqOk = true;
+        for (int k = 0; k < omniStart; k++)
+        {
+            const double f = (double)hist[k] / (double)N;
+            const double sigma = std::sqrt(std::fmax(p[k] * (1.0 - p[k]) / (double)N, 1e-18));
+            if (std::fabs(f - p[k]) > 6.0 * sigma + 1e-7) freqOk = false;
+        }
+        std::snprintf(msg, sizeof msg, "DOOM-0653 INV-3 cell %d: picks in range, pdf as reported", cell);
+        check(inRange && pdfAgrees, msg);
+        std::snprintf(msg, sizeof msg, "DOOM-0653 INV-3 cell %d: pick frequency matches p (<=6 sigma)", cell);
+        check(freqOk, msg);
+        std::snprintf(msg, sizeof msg, "DOOM-0653 INV-1 cell %d: mean g/p = %.4f, expected %.4f (6 sigma %.4f)",
+                      cell, est, want, 6.0 * se);
+        check(std::fabs(est - want) <= 6.0 * se + 1e-9, msg);
+    }
+
+    // INV-4: no cell, a cell outside the grid, an empty list and lists built for another
+    // static set all pick exactly as nee_pick_static, for the same u.
+    const int cells[4] = { -1, 3, 2, 0 };
+    for (int ci = 0; ci < 4; ci++)
+    {
+        std::vector<uint32_t> buf = nee;
+        if (ci == 3) buf[NEE_HDR_EMITTERS] = omniStart + 1;
+        bool same = true;
+        uint32_t seed = 0xBEEFu;
+        for (int s = 0; s < 100000; s++)
+        {
+            const float u0 = rnd(seed), u1 = rnd(seed);
+            float pa = 0.0f, pb = 0.0f;
+            const int ka = nee_pick_mixture(cdf.data(), pdf.data(), omniStart, buf.data(), cells[ci],
+                                            u0, u1, &pa);
+            const int kb = nee_pick_static(cdf.data(), pdf.data(), omniStart, u0, &pb);
+            if (ka != kb || pa != pb) same = false;
+        }
+        // The shader's rnd returns exactly 1.0 for a seed near 2^32 (the float rounds up).
+        {
+            uint32_t top = 0xFFFFFFFFu;
+            const float one = (float)top * (1.0f / 4294967296.0f);
+            float pa = 0.0f, pb = 0.0f;
+            const int ka = nee_pick_mixture(cdf.data(), pdf.data(), omniStart, buf.data(), cells[ci],
+                                            one, one, &pa);
+            const int kb = nee_pick_static(cdf.data(), pdf.data(), omniStart, one, &pb);
+            if (one != 1.0f || ka != kb || pa != pb) same = false;
+        }
+        const char* what[4] = { "no cell", "a cell outside the grid", "an empty list",
+                                "lists for another static set" };
+        char msg[160];
+        std::snprintf(msg, sizeof msg, "DOOM-0653 INV-4 %s: picks and pdfs equal nee_pick_static", what[ci]);
+        check(same, msg);
+    }
+}
+
 int main()
 {
     std::printf("nee_sampling_test (DOOM-0009 step 3c-3): power-importance NEE is unbiased\n");
@@ -335,6 +466,9 @@ int main()
         // tiny static share: the over-count factor is huge here.
         check_static_prefix("static{1,1} + omni{998}", { 1.0f, 1.0f, 998.0f }, 2, { 5.0, 7.0 });
     }
+
+    std::printf("- per-cell mixture pick (DOOM-0653)\n");
+    check_mixture();
 
     return check_summary("nee_sampling");
 }

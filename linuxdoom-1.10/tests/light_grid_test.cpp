@@ -16,7 +16,12 @@
 //          the sight line hides nothing.
 //   INV-10 A two-sided line blocks a probe whose height its opening does not hold.
 //
+// DOOM-0653 INV-6 (docs/specs/DOOM-0653-cell-light-pick.md): the traced view's NEE cell
+// lists hold at most the cap, each entry above 0 and sorted by cluster id, and a cell over
+// the cap keeps its largest estimates.
+//
 // Build/run: `make test` (from linuxdoom-1.10/). No WAD, no GPU, no display.
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <vector>
@@ -387,6 +392,97 @@ int main()
         const ProbeLattice big = MakeProbeLattice(0, 0, 64, 4, 4, -1000.0f, 3000.0f);
         check(big.nz <= RB_PROBE_MAXLAYERS && big.oz + (big.nz - 0.5f) * big.dz >= 3000.0f,
               "the layers fit the cap and still span the map's height");
+    }
+
+    // DOOM-0653 INV-6: twelve clusters round a 4x4 grid of 64-unit cells, a cap of 5 so
+    // most cells overflow, and a veto on one pair. Each cell is checked against a brute-
+    // force ranking of the same estimates.
+    {
+        Grid g; g.ox = 0.0f; g.oy = 0.0f; g.cell = 64.0f; g.w = 4; g.h = 4;
+        const int nc = 12;
+        float cx[nc], cy[nc];
+        std::vector<int32_t> ec;
+        std::vector<float>   ew;
+        for (int c = 0; c < nc; c++)
+        {
+            cx[c] = -100.0f + 37.0f * (float)c;
+            cy[c] = 250.0f - 41.0f * (float)((c * 5) % nc);
+            for (int k = 0; k <= c % 3; k++) { ec.push_back(c); ew.push_back(0.5f + (float)((c * 7 + k) % 5)); }
+        }
+        ec.push_back(-1); ew.push_back(9.0f);           // an emitter with no cluster
+        ec.push_back(3);  ew.push_back(0.0f);           // a powerless member
+        const uint32_t cap = 5;
+        auto see = [](size_t cell, uint32_t c) { return !(cell == 5 && c == 4); };
+        std::vector<uint32_t> nee;
+        const ListStats st = BuildNeeCellLists(g, cx, cy, nc, ec.data(), ew.data(), (int)ec.size(),
+                                               cap, nee, see);
+        std::vector<double> P(nc, 0.0);
+        for (size_t e = 0; e < ec.size(); e++) if (ec[e] >= 0) P[(size_t)ec[e]] += ew[e];
+
+        bool allOk = true;
+        uint32_t over = 0, worst = 0;
+        for (int iy = 0; iy < g.h; iy++)
+        for (int ix = 0; ix < g.w; ix++)
+        {
+            const size_t cell = (size_t)iy * g.w + ix;
+            std::vector<std::pair<float, uint32_t>> want;
+            uint32_t inRange = 0;              // before the cull, as the stats count
+            for (int c = 0; c < nc; c++)
+            {
+                const float d = BoxDist(g, ix, iy, cx[c], cy[c]);
+                const float E = (float)(P[(size_t)c] / std::max(d * d, NEE_NEAR * NEE_NEAR));
+                if (!(d < NEE_LIST_RANGE && E > 0.0f)) continue;
+                inRange++;
+                if (see(cell, (uint32_t)c)) want.emplace_back(E, (uint32_t)c);
+            }
+            worst = std::max(worst, inRange);
+            if (inRange > cap) over++;
+            std::sort(want.begin(), want.end(), [](const std::pair<float, uint32_t>& a,
+                                                   const std::pair<float, uint32_t>& b) {
+                return a.first != b.first ? a.first > b.first : a.second < b.second;
+            });
+            if (want.size() > cap) want.resize(cap);
+            std::vector<uint32_t> ids;
+            for (const auto& wv : want) ids.push_back(wv.second);
+            std::sort(ids.begin(), ids.end());
+
+            uint32_t first;
+            const uint32_t count = nee_cell_list(nee.data(), (int)cell, (int)ec.size(), &first);
+            std::vector<uint32_t> got;
+            const uint32_t* en = nee.data() + nee[NEE_HDR_ENTRY_AT];
+            bool sorted = true, positive = true;
+            for (uint32_t k = 0; k < count; k++)
+            {
+                got.push_back(en[(first + k) * NEE_ENTRY_WORDS]);
+                if (k > 0 && got[k] <= got[k - 1]) sorted = false;
+                if (!(nee_word_float(en[(first + k) * NEE_ENTRY_WORDS + 2]) > 0.0f)) positive = false;
+            }
+            if (got != ids || !sorted || !positive || count > cap) allOk = false;
+        }
+        check(allOk, "DOOM-0653 INV-6: every cell holds the brute-force top estimates, sorted, each above 0");
+        // The stats are upper bounds taken per block of cells, so they may only exceed the
+        // per-cell counts.
+        check(over > 0 && st.overflow >= over, "DOOM-0653 INV-6: every cell with more in range than the cap is counted");
+        check(st.worst >= worst, "DOOM-0653 INV-6: the reported worst bounds the most clusters in range of one cell");
+
+        // A cluster's triangles and the per-emitter table agree, and in-cluster pdfs sum to 1.
+        const uint32_t* cl = nee.data() + nee[NEE_HDR_CLUSTER_AT];
+        const uint32_t* tr = nee.data() + nee[NEE_HDR_TRI_AT];
+        const uint32_t* em = nee.data() + nee[NEE_HDR_EMIT_AT];
+        bool tables = true;
+        for (int c = 0; c < nc; c++)
+        {
+            double s = 0.0;
+            for (uint32_t k = 0; k < cl[2 * c + 1]; k++)
+            {
+                const uint32_t e = tr[2 * (cl[2 * c] + k)];
+                if (em[2 * e] != (uint32_t)c) tables = false;
+                s += nee_word_float(em[2 * e + 1]);
+            }
+            if (std::fabs(s - 1.0) > 1e-5) tables = false;
+        }
+        if (em[2 * (ec.size() - 2)] != NEE_NO_CLUSTER) tables = false;   // the one with no cluster
+        check(tables, "DOOM-0653: cluster triangle lists, emitter clusters and in-cluster pdfs agree");
     }
 
     return check_summary("light_grid_test");

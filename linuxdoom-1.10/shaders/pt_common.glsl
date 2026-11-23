@@ -449,6 +449,105 @@ layout(buffer_reference, scalar) readonly buffer Reject  { uint w[]; };
 #include "formulas/pcg_hash.glsl"
 float rnd(inout uint s) { s = pcgHash(s); return float(s) * (1.0 / 4294967296.0); }
 
+// DOOM-0653: the traced view's per-cell light lists, written by light_grid.h's
+// BuildNeeCellLists in the layout nee_sampling.h describes (uint words, floats bit-cast).
+// Every name below MUST equal nee_sampling.h's (shader_mirror_test.cpp).
+layout(buffer_reference, scalar) readonly buffer NeeLists { uint w[]; };
+const float NEE_GLOBAL_FRAC    = 0.25;
+const uint  NEE_HDR_CELLS      = 0u;
+const uint  NEE_HDR_EMITTERS   = 1u;
+const uint  NEE_HDR_CELL_AT    = 2u;
+const uint  NEE_HDR_ENTRY_AT   = 3u;
+const uint  NEE_HDR_CLUSTER_AT = 4u;
+const uint  NEE_HDR_TRI_AT     = 5u;
+const uint  NEE_HDR_EMIT_AT    = 6u;
+const uint  NEE_ENTRY_WORDS    = 3u;
+const uint  NEE_NO_CLUSTER     = 0xFFFFFFFFu;
+
+// The mixture pick of one static emitter (nee_sampling.h's nee_pick_mixture is the copy
+// the tests read). With probability NEE_GLOBAL_FRAC, the global draw over [0, omniStart);
+// otherwise a cluster from the hit's cell list, then a triangle in it. `pdf` is the
+// mixture's, so the sample is unbiased whichever draw made it (spec INV-1). neeCell < 0
+// (the bake), an empty list, or lists built for another static set give the global draw
+// alone, exactly as before DOOM-0653 (INV-4). cdfMax is the static prefix's top cdf.
+uint neePickStatic(Emitters emit, uint omniStart, float cdfMax, NeeLists nee, int neeCell,
+                   inout uint seed, out float pdf)
+{
+    uint first = 0u, count = 0u;
+    if (neeCell >= 0 && nee.w[NEE_HDR_EMITTERS] == omniStart
+        && uint(neeCell) < nee.w[NEE_HDR_CELLS])
+    {
+        uint c = nee.w[NEE_HDR_CELL_AT] + 2u * uint(neeCell);
+        first = nee.w[c];
+        count = nee.w[c + 1u];
+    }
+    float a  = count > 0u ? NEE_GLOBAL_FRAC : 1.0;
+    float u0 = rnd(seed);
+    uint  k;
+    // rnd can return exactly 1.0 (a uint near 2^32 rounds up as a float), so u0 < a alone
+    // would send an empty list to the cluster draw, which reads a null NeeLists.
+    if (count == 0u || u0 < a)
+    {
+        float u  = (u0 / a) * cdfMax;
+        uint  lo = 0u, hi = omniStart - 1u;
+        while (lo < hi)
+        {
+            uint mid = (lo + hi) >> 1u;
+            if (emit.e[mid * 14u + 12u] < u) lo = mid + 1u;
+            else                             hi = mid;
+        }
+        k = lo;
+    }
+    else
+    {
+        float u  = (u0 - a) / (1.0 - a);
+        uint  en = nee.w[NEE_HDR_ENTRY_AT];
+        uint  lo = first, hi = first + count - 1u;
+        while (lo < hi)
+        {
+            uint mid = (lo + hi) >> 1u;
+            if (uintBitsToFloat(nee.w[en + mid * NEE_ENTRY_WORDS + 1u]) < u) lo = mid + 1u;
+            else                                                             hi = mid;
+        }
+        uint cl = nee.w[NEE_HDR_CLUSTER_AT] + 2u * nee.w[en + lo * NEE_ENTRY_WORDS];
+        uint tr = nee.w[NEE_HDR_TRI_AT];
+        float u1 = rnd(seed);
+        uint tlo = nee.w[cl], thi = nee.w[cl] + nee.w[cl + 1u] - 1u;
+        while (tlo < thi)
+        {
+            uint mid = (tlo + thi) >> 1u;
+            if (uintBitsToFloat(nee.w[tr + 2u * mid + 1u]) < u1) tlo = mid + 1u;
+            else                                                  thi = mid;
+        }
+        k = nee.w[tr + 2u * tlo];
+    }
+    float pg = emit.e[k * 14u + 13u] / max(cdfMax, 1e-8);
+    pdf = pg;
+    if (count > 0u)
+    {
+        // The cell's share of k's cluster, found by binary search on cluster id.
+        uint  em = nee.w[NEE_HDR_EMIT_AT] + 2u * k;
+        uint  ck = nee.w[em];
+        float pc = 0.0;
+        if (ck != NEE_NO_CLUSTER)
+        {
+            uint en = nee.w[NEE_HDR_ENTRY_AT];
+            uint lo = first, hi = first + count;
+            while (lo < hi)
+            {
+                uint mid = (lo + hi) >> 1u;
+                if (nee.w[en + mid * NEE_ENTRY_WORDS] < ck) lo = mid + 1u;
+                else                                        hi = mid;
+            }
+            if (lo < first + count && nee.w[en + lo * NEE_ENTRY_WORDS] == ck)
+                pc = uintBitsToFloat(nee.w[en + lo * NEE_ENTRY_WORDS + 2u])
+                   * uintBitsToFloat(nee.w[em + 1u]);
+        }
+        pdf = NEE_GLOBAL_FRAC * pg + (1.0 - NEE_GLOBAL_FRAC) * pc;
+    }
+    return k;
+}
+
 // Linear surface albedo: fetch the paletted DOOM texel exactly as the raster
 // mesh.frag does (R8 index -> PLAYPAL RGB), then de-gamma to linear. `id` is the
 // unified bindless material id (walls direct, flats offset by numWall); `uv` is
@@ -578,6 +677,8 @@ vec3 sampleEmitter(uint k, vec3 hitP, vec3 n, float pdfSel, uint omniStart, Emit
 // -> no cull); numSectors is the REJECT matrix dimension (0 = cull off). emitSec +
 // reject are the cull buffers. They gate ONLY the omnidirectional sprite loop below;
 // the GI bake passes numSectors 0 (its omni loop is empty, omniStart == emitCount).
+// DOOM-0653: nee and neeCell are the traced view's cell lists and the hit's cell, which
+// the static pick mixes in (neePickStatic); the bake passes neeCell -1, the global pick.
 // DOOM-0103: `spec` receives the specular sum, kept apart from the returned matte light
 // and never multiplied by albedo. v is the unit direction to the eye, rough the
 // surface's roughness, f0 its specF0 (DOOM-0517); specSet and ctrlFlags go to specOn.
@@ -586,8 +687,9 @@ vec3 sampleEmitter(uint k, vec3 hitP, vec3 n, float pdfSel, uint omniStart, Emit
 vec3 shadeSurface(vec3 hitP, vec3 n, vec3 albedo, uint id, uint emitCount,
                   uint omniStart, Emitters emit, MatEmis matEmis, uint nSamples,
                   bool addEmission, float emisMask, uint hitSec, uint numSectors,
-                  EmitSec emitSec, Reject reject, vec3 v, float rough, vec3 f0, uint specSet,
-                  uint ctrlFlags, out vec3 spec, inout uint seed)
+                  EmitSec emitSec, Reject reject, NeeLists nee, int neeCell, vec3 v,
+                  float rough, vec3 f0, uint specSet, uint ctrlFlags, out vec3 spec,
+                  inout uint seed)
 {
     spec = vec3(0.0);
     // Self-emission (linear) from the per-material Le table, scaled by `emisMask`.
@@ -620,23 +722,14 @@ vec3 shadeSurface(vec3 hitP, vec3 n, vec3 albedo, uint id, uint emitCount,
             vec3 direct = vec3(0.0), sdirect = vec3(0.0);
             for (uint si = 0u; si < nSamples; si++)
             {
-                // Binary-search the cdf (slot 12) over [0, omniStart) for the first
-                // k with cdf[k] >= u, then weight by its 1/pdf (slot 13).
-                // DOOM-0377: the table covers the merged set, so the static
-                // prefix tops out at cdfMax = 1 - P(sprite lights), not 1. Draw u
-                // over the prefix and renormalise the pdf to it; nee_pick_static
-                // (nee_sampling.h) is this draw, and its test holds the maths.
+                // DOOM-0377: the table covers the merged set, so the static prefix
+                // tops out at cdfMax = 1 - P(sprite lights), not 1; the pick
+                // renormalises to it. DOOM-0653: the pick mixes the global draw with
+                // the hit cell's list (neePickStatic).
                 float cdfMax = emit.e[(omniStart - 1u) * 14u + 12u];
                 if (cdfMax <= 0.0) break;     // no static emitter has any power
-                float u  = rnd(seed) * cdfMax;
-                uint  lo = 0u, hi = omniStart - 1u;
-                while (lo < hi)
-                {
-                    uint mid = (lo + hi) >> 1u;
-                    if (emit.e[mid * 14u + 12u] < u) lo = mid + 1u;
-                    else                             hi = mid;
-                }
-                float pdf = emit.e[lo * 14u + 13u] / max(cdfMax, 1e-8);
+                float pdf;
+                uint  lo = neePickStatic(emit, omniStart, cdfMax, nee, neeCell, seed, pdf);
                 vec3  wi;
                 vec3  c   = sampleEmitter(lo, hitP, n, pdf, omniStart, emit, 0.0, wi, seed);
                 vec3  rad = albedo * (1.0 / PI) * c; // reflected radiance (Lambert)
@@ -736,30 +829,42 @@ vec3 cosineHemisphere(vec3 n, inout uint seed)
 // the invariant explicitly excludes. The display/bake path (shadeSurface) keeps its
 // clamp; only this verify path drops it.
 
-// One power-importance NEE sample over the FULL emitter set [0, emitCount), unclamped:
-// a single cdf binary-search pick weighted by 1/pdf. This is INV-6's unbiased-selection
-// REFERENCE, not a literal mirror of shadeSurface's production pick -- after the
-// DOOM-0084 static/omni split shadeSurface selects static emitters by cdf but samples
-// the omni sprites in a separate RIS loop (DOOM-0120). omniStart only sets how
-// sampleEmitter interprets a picked emitter (oriented < omniStart, omni >=); the real
-// omniStart (pc.misc4.y) is now passed so the omni emitters are covered, and
-// directAllLights passes the same omniStart, so the importance identity holds (INV-6).
+// One power-importance NEE sample over the FULL emitter set [0, emitCount), unclamped,
+// weighted by 1/pdf. DOOM-0653 (spec 4.4): with probability cdfMax, the static share of
+// the merged table, it makes shadeSurface's own static pick (neePickStatic), weighted by
+// cdfMax times its pdf; otherwise it picks a sprite light by the merged cdf. So -rtverify
+// checks the shipped static pick, not a stand-in. The sprites' production path is the RIS
+// loop (DOOM-0120), which this does not mirror. omniStart only sets how sampleEmitter
+// interprets a picked emitter (oriented < omniStart, omni >=); directAllLights passes the
+// same omniStart, so the importance identity holds (INV-6).
 // DOOM-0103: both estimators add the same specular term, so -rtverify covers the lobe;
 // v, rough, f0, specSet and ctrlFlags are shadeSurface's.
 vec3 directNEEVerify(vec3 hitP, vec3 n, vec3 albedo, uint emitCount,
-                     uint omniStart, Emitters emit, vec3 v, float rough, vec3 f0, uint specSet,
-                     uint ctrlFlags, inout uint seed)
+                     uint omniStart, Emitters emit, NeeLists nee, int neeCell, vec3 v,
+                     float rough, vec3 f0, uint specSet, uint ctrlFlags, inout uint seed)
 {
     if (emitCount == 0u) return vec3(0.0);
-    float u  = rnd(seed);
-    uint  lo = 0u, hi = emitCount - 1u;
-    while (lo < hi)
+    float cdfMax = omniStart > 0u ? emit.e[(omniStart - 1u) * 14u + 12u] : 0.0;
+    float u      = rnd(seed);
+    uint  lo;
+    float pdf;
+    if (u < cdfMax)
     {
-        uint mid = (lo + hi) >> 1u;
-        if (emit.e[mid * 14u + 12u] < u) lo = mid + 1u;
-        else                             hi = mid;
+        lo  = neePickStatic(emit, omniStart, cdfMax, nee, neeCell, seed, pdf);
+        pdf *= cdfMax;
     }
-    float pdf = emit.e[lo * 14u + 13u];
+    else
+    {
+        uint hi = emitCount - 1u;
+        lo = omniStart;
+        while (lo < hi)
+        {
+            uint mid = (lo + hi) >> 1u;
+            if (emit.e[mid * 14u + 12u] < u) lo = mid + 1u;
+            else                             hi = mid;
+        }
+        pdf = emit.e[lo * 14u + 13u];
+    }
     vec3  wi;
     vec3  c = sampleEmitter(lo, hitP, n, pdf, omniStart, emit, 0.0, wi, seed);
     vec3  r = albedo * (1.0 / PI) * c;

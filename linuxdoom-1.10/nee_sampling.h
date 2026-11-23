@@ -16,9 +16,14 @@
 // uniform sampling, only lower variance. The only way 3c-2 could bias the image
 // is if the realised selection frequency does not match the stored pdf, or the
 // pdf is not a normalised distribution. Both are exactly what the test checks.
+//
+// DOOM-0653 adds the traced view's per-cell mixture pick of the static set (below
+// nee_pick_static), which keeps the global draw as one of its two strategies.
 #ifndef NEE_SAMPLING_H
 #define NEE_SAMPLING_H
 
+#include <cstdint>
+#include <cstring>
 #include <vector>
 
 // Floats per emitter record in the GPU buffer: v0[3] v1[3] v2[3] Le[3] cdf pdf.
@@ -92,6 +97,122 @@ static inline int nee_pick_static(const float* cdf, const float* pdf, int omniSt
     const int   k      = nee_pick(cdf, omniStart, u01 * cdfMax);
 
     *pdfSel = pdf[k] / (cdfMax > 1e-8f ? cdfMax : 1e-8f);
+    return k;
+}
+
+// ---------------------------------------------------------------------------------------
+// DOOM-0653: the traced view's per-cell pick of the static set, a MIXTURE of two draws.
+// With probability a = NEE_GLOBAL_FRAC a sample makes the global draw above; otherwise it
+// draws a light cluster from the hit's cell list (by its estimate at the cell), then a
+// triangle in that cluster (by power). Either way it is weighted by
+//     p(t) = a * pg(t) + (1 - a) * pc(cluster(t)) * pin(t)
+// so the estimate stays unbiased whatever a list leaves out: a light missing from the
+// list is still reached through the global share (spec INV-1, INV-2). A cell with no
+// list, or no cell (the GI bake), sets a = 1, which is nee_pick_static exactly (INV-4).
+//
+// The lists' buffer, which lgrid::BuildNeeCellLists (light_grid.h) writes and
+// pt_common.glsl's neePickStatic reads, is uint32 words end to end, floats bit-cast:
+//   header   NEE_HDR_WORDS words, named below
+//   cells    two per cell: first entry, count
+//   entries  NEE_ENTRY_WORDS each: cluster id, cdf, pdf; a cell's sorted by cluster id
+//   clusters two per cluster: first triangle, count
+//   tris     two per triangle, grouped by cluster: emitter index, in-cluster cdf
+//   emit     two per static emitter: cluster id (NEE_NO_CLUSTER for none), in-cluster pdf
+// Each name below MUST equal pt_common.glsl's (shader_mirror_test.cpp).
+static const float    NEE_GLOBAL_FRAC    = 0.25f;
+static const uint32_t NEE_HDR_CELLS      = 0;   // cell count (the seep grid's)
+static const uint32_t NEE_HDR_EMITTERS   = 1;   // the static emitter count the lists index
+static const uint32_t NEE_HDR_CELL_AT    = 2;   // word offsets of each section
+static const uint32_t NEE_HDR_ENTRY_AT   = 3;
+static const uint32_t NEE_HDR_CLUSTER_AT = 4;
+static const uint32_t NEE_HDR_TRI_AT     = 5;
+static const uint32_t NEE_HDR_EMIT_AT    = 6;
+static const uint32_t NEE_HDR_CLUSTERS   = 7;   // cluster count
+static const uint32_t NEE_HDR_WORDS      = 8;
+static const uint32_t NEE_ENTRY_WORDS    = 3;
+static const uint32_t NEE_NO_CLUSTER     = 0xFFFFFFFFu;
+
+static inline float nee_word_float(uint32_t u) { float f; std::memcpy(&f, &u, sizeof f); return f; }
+
+// Cell `cell`'s list in `nee` as (first entry, count); count 0 when the buffer holds no
+// lists for this static set, or the cell is outside it. Matches neeCellList.
+static inline uint32_t nee_cell_list(const uint32_t* nee, int cell, int omniStart, uint32_t* first)
+{
+    *first = 0;
+    if (!nee || cell < 0 || nee[NEE_HDR_EMITTERS] != (uint32_t)omniStart
+        || (uint32_t)cell >= nee[NEE_HDR_CELLS])
+        return 0;
+    const uint32_t* c = nee + nee[NEE_HDR_CELL_AT] + 2u * (uint32_t)cell;
+    *first = c[0];
+    return c[1];
+}
+
+// The mixture pdf of static emitter k for a hit whose list is (first, count). `pg` is k's
+// global pdf over the static prefix (pdf[k] / cdfMax). Matches neeMixturePdf.
+static inline float nee_mixture_pdf(const uint32_t* nee, uint32_t first, uint32_t count,
+                                    int k, float pg)
+{
+    if (count == 0)
+        return pg;
+    const uint32_t* em = nee + nee[NEE_HDR_EMIT_AT] + 2u * (uint32_t)k;
+    float pc = 0.0f;
+    if (em[0] != NEE_NO_CLUSTER)
+    {
+        // The entries are sorted by cluster id: binary-search for k's cluster.
+        const uint32_t* en = nee + nee[NEE_HDR_ENTRY_AT];
+        uint32_t lo = first, hi = first + count;
+        while (lo < hi)
+        {
+            const uint32_t mid = (lo + hi) >> 1;
+            if (en[mid * NEE_ENTRY_WORDS] < em[0]) lo = mid + 1;
+            else                                   hi = mid;
+        }
+        if (lo < first + count && en[lo * NEE_ENTRY_WORDS] == em[0])
+            pc = nee_word_float(en[lo * NEE_ENTRY_WORDS + 2]) * nee_word_float(em[1]);
+    }
+    return NEE_GLOBAL_FRAC * pg + (1.0f - NEE_GLOBAL_FRAC) * pc;
+}
+
+// The mixture pick, as neePickStatic (pt_common.glsl) makes it. u0 and u1 are uniform in
+// [0,1); u1 is read only on the cluster draw (the shader draws it only there). With no
+// list this is nee_pick_static(cdf, pdf, omniStart, u0, pdfSel) exactly.
+// PRECONDITION: omniStart >= 1, as for nee_pick_static.
+static inline int nee_pick_mixture(const float* cdf, const float* pdf, int omniStart,
+                                   const uint32_t* nee, int cell, float u0, float u1,
+                                   float* pdfSel)
+{
+    const float cdfMax = cdf[omniStart - 1];
+    const float inv    = 1.0f / (cdfMax > 1e-8f ? cdfMax : 1e-8f);
+    uint32_t first;
+    const uint32_t count = nee_cell_list(nee, cell, omniStart, &first);
+    const float a = count ? NEE_GLOBAL_FRAC : 1.0f;
+    int k;
+    if (count == 0 || u0 < a)                 // u0 may be exactly 1, as the shader's rnd can be
+        k = nee_pick(cdf, omniStart, (u0 / a) * cdfMax);
+    else
+    {
+        // A cluster from the cell's cdf, then a triangle from the cluster's.
+        const float     u  = (u0 - a) / (1.0f - a);
+        const uint32_t* en = nee + nee[NEE_HDR_ENTRY_AT];
+        uint32_t lo = first, hi = first + count - 1;
+        while (lo < hi)
+        {
+            const uint32_t mid = (lo + hi) >> 1;
+            if (nee_word_float(en[mid * NEE_ENTRY_WORDS + 1]) < u) lo = mid + 1;
+            else                                                   hi = mid;
+        }
+        const uint32_t* cl = nee + nee[NEE_HDR_CLUSTER_AT] + 2u * en[lo * NEE_ENTRY_WORDS];
+        const uint32_t* tr = nee + nee[NEE_HDR_TRI_AT];
+        uint32_t tlo = cl[0], thi = cl[0] + cl[1] - 1;
+        while (tlo < thi)
+        {
+            const uint32_t mid = (tlo + thi) >> 1;
+            if (nee_word_float(tr[2 * mid + 1]) < u1) tlo = mid + 1;
+            else                                      thi = mid;
+        }
+        k = (int)tr[2 * tlo];
+    }
+    *pdfSel = nee_mixture_pdf(nee, first, count, k, pdf[k] * inv);
     return k;
 }
 

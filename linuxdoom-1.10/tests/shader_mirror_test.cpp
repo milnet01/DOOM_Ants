@@ -218,6 +218,18 @@ int main()
         check(seen == 14, "the RG_* header has 14 words on the C side");
     }
 
+    // DOOM-0653: the NEE cell lists' global share and buffer layout, which
+    // nee_sampling.h's nee_pick_mixture and pt_common.glsl's neePickStatic both read.
+    {
+        const std::string ns = slurp(DOOM_TESTS_ROOT "/nee_sampling.h");
+        const std::string pc = slurp(DOOM_TESTS_ROOT "/shaders/pt_common.glsl");
+        check(!ns.empty() && !pc.empty(), "nee_sampling.h and pt_common.glsl are readable");
+        const char* names[] = { "NEE_GLOBAL_FRAC", "NEE_HDR_CELLS", "NEE_HDR_EMITTERS",
+                                "NEE_HDR_CELL_AT", "NEE_HDR_ENTRY_AT", "NEE_HDR_CLUSTER_AT",
+                                "NEE_HDR_TRI_AT", "NEE_HDR_EMIT_AT", "NEE_ENTRY_WORDS" };
+        for (const char* n : names) same(pc, n, ns, n);
+    }
+
     // DOOM-0455 INV-2: the powerup mode codes, C header against GLSL include.
     const std::string fh = slurp(DOOM_TESTS_ROOT "/fixed_colormap.h");
     const std::string fg = slurp(DOOM_TESTS_ROOT "/shaders/formulas/fixed_colormap.glsl");

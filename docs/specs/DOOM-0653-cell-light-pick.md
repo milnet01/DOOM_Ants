@@ -1,7 +1,7 @@
 <!-- ants-spec-format: 1 -->
 # DOOM-0653 — The traced view picks wall and floor lights by what reaches the point
 
-**Status:** accepted (2026-11-22).
+**Status:** accepted (2026-11-22); B1 built (2026-11-23).
 **Kind:** fix.
 **Source:** ROADMAP DOOM-0653 (light lab handoff, 2026-11-21).
 **Builds on:** DOOM-0652 (the shared light grid: `ClusterStaticLights`, the seep grid, the
@@ -121,10 +121,15 @@ The specular lobe uses the same sample, as it does today. The firefly clamp is u
 
 ### 4.3 When the lists are built
 
-With DOOM-0652's static raster grid, in `RebuildStaticLightGrid`: at load, when the static
-emitter set or its Le changes (`g.staticLightsDirty`, `g.staticLightLeDirty`, a light-lab
-switch), and when the seep grid changes. A door's polar-map redraw does not rebuild them
-(§ 10).
+Whenever DOOM-0652's static raster grid is rebuilt (`RebuildStaticLightGrid`): at load,
+when the static emitter set changes (`g.staticLightsDirty`, a light-lab switch), and when the
+seep grid changes. The rebuild keeps the clusters and marks the lists stale; the next traced
+frame, or `-rtverify`, builds and uploads them (`BuildNeeLists`), so the rasterised view
+never pays for them. Both views keep the grid current each frame (`UpdateStaticLightGrid`).
+
+An Le-only change (`g.staticLightLeDirty`, an animated flat) keeps the lists. The pick reads
+the pdfs stored with them, so a stale list costs noise, not bias. A door's polar-map redraw
+does not rebuild them (§ 10).
 
 ### 4.4 The verify path
 
@@ -135,17 +140,20 @@ not a stand-in, against `directAllLights`.
 
 ## 5. Data & resources
 
-- One host-written buffer, rebuilt with the lists. Layout in `light_grid.h`: a header (cell
-  count, cluster count), two words per cell (first entry, count), the entries (cluster id,
-  cdf, pdf), two words per cluster (first triangle, count), the triangles by cluster (emitter
-  index, in-cluster cdf), and one word pair per static emitter (cluster id, in-cluster pdf).
-  No cell holds more than `NEE_CELL_LIGHTS` entries.
+- One host-written buffer, rebuilt with the lists, written with the device idle. Layout in
+  `nee_sampling.h`, beside the pick that reads it: a header (cell count, the static emitter
+  count the lists index, the sections' offsets, cluster count), two words per cell (first
+  entry, count), the entries (cluster id, cdf, pdf), two words per cluster (first triangle,
+  count), the triangles by cluster (emitter index, in-cluster cdf), and one word pair per
+  static emitter (cluster id, in-cluster pdf). No cell holds more than `NEE_CELL_LIGHTS`
+  entries. A header whose emitter count differs from `omniStart` gives the global pick alone.
 - The megakernel reaches it by a device address carried in the `SeepXform` block (set 0,
-  binding 5); the push range is full (`pc.misc7` closes it at 256 bytes). The cell is
-  `fogLightCell(hitP.xy)`. `shadeSurface` takes the address and the cell; the bake passes no
-  cell.
-- Constants, each mirrored between C and GLSL: `NEE_GLOBAL_FRAC` 0.25, `NEE_CELL_LIGHTS` 32,
-  `NEE_NEAR` 64, `NEE_LIST_RANGE` 2048. B2 tunes them.
+  binding 5) as a `uvec2` (`GL_EXT_buffer_reference_uvec2`); the push range is full
+  (`pc.misc7` closes it at 256 bytes). The cell is `fogLightCell(hitP.xy)`. `shadeSurface`
+  takes the address and the cell; the bake passes cell −1.
+- Constants: `NEE_GLOBAL_FRAC` 0.25, mirrored between `nee_sampling.h` and `pt_common.glsl`
+  with the layout's names. `NEE_CELL_LIGHTS` 32, `NEE_NEAR` 64 and `NEE_LIST_RANGE` 2048 are
+  read by the CPU builder alone, in `light_grid.h`. B2 tunes them.
 
 ## 6. Performance budget
 
@@ -239,7 +247,7 @@ Each stage ends with `make`, `make test` and the § 8 checks.
 | INV-5 | Partial: two capture spots on E1M1 |
 | INV-6 | `tests/light_grid_test.cpp` |
 | INV-7 | Partial: one capture spot |
-| The C and GLSL copies of the § 5 constants agree | `tests/shader_mirror_test.cpp`, once B1 adds the pairs |
+| The C and GLSL copies of `NEE_GLOBAL_FRAC` and the layout's names agree | `tests/shader_mirror_test.cpp` |
 
 ## 12. Cross-doc impact
 
