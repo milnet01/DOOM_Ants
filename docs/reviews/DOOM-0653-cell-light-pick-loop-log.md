@@ -8,3 +8,4 @@ nobody has reviewed it.
 | Loop | Date | Lanes | Q1 | Q2 | Q3 | Q4 | Outcome |
 |------|------|-------|----|----|----|----|---------|
 | impl (B1) | 2026-11-23 | none dispatched | - | - | - | - | Amended §§ 4.3, 5, 11 to the built B1: lists also rebuilt from the traced view, kept on an Le-only change; layout in nee_sampling.h; only NEE_GLOBAL_FRAC and the layout mirrored. Not a review. |
+| impl (B2) | 2026-11-23 | none dispatched | - | - | - | - | Amended §§ 5, 7, 9, 10 to the built B2: NEE_GLOBAL_FRAC 0.1, NEE_NEAR 16, NEE_SAMPLES 4; sweep and timings in § 7; RIS candidates moved from § 10 to § 9, rejected on cost; INV-5's courtyard bar met on one capture frame only. Not a review. |

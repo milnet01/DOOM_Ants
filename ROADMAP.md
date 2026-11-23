@@ -21368,6 +21368,24 @@ in CLAUDE.md describes.
   over the spec 6 budget of 20 ms on MAP24, owed to B2. Found:
   shader rnd() can return exactly 1.0, which sent an empty list to
   the cluster draw (GPU fault); fixed, nee_sampling_test holds it.
+  B2 built 2026-11-23: NEE_GLOBAL_FRAC 0.25 -> 0.1, NEE_NEAR 64
+  -> 16, NEE_SAMPLES 6 -> 4 (spec section 7 holds the sweep and
+  timings). E1M1 -rtview 4, -lightlab 3: start room 77.26 -> 5.68
+  specks per 1000 dim px (bar 38.6, met); courtyard 24.23 -> 14.34
+  (bar 12.1, missed; at 6 samples 12.00 or 13.4 by capture frame).
+  The courtyard's animated glowing floor puts each capture on one of
+  two frames that differ by about 1.4; nothing freezes it. Megakernel,
+  held machine + GPU lock: pre-B1 E1M4 10.68 / E3M6 19.44 ms; the B2
+  pick at 6 samples 11.45 / 23.30; at 4 samples 10.13 / 19.85. The
+  pick itself costs nothing (forced global share 1: 19.42); the cost
+  was more samples landing on lights that reach the point, each
+  casting a shadow ray. MAP24 list build 19.6-21.9 -> 16.2-17.2 ms
+  (budget 20): entries written straight into one array.
+  -rtverify start 0.0101% PASS. RIS over 8 candidates met the
+  courtyard bar (10.67) but tripled the megakernel: rejected.
+  Denoised -rtview 6 stills: start room 0.20 -> 0.25, courtyard 0.72
+  -> 1.18 (6 samples: 0.69). Awaits the user's look; Scratchpad
+  d0653 look4_cmp_*.png, raw4_cmp_*.png.
   **Layman:** In the ray-traced view, dark corners look grainy because the game spends its light samples on bright lamps far away instead of the ones nearby.
   Kind: fix.
   Source: user-2026-11-21 (light lab handoff).

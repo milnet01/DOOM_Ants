@@ -453,7 +453,7 @@ float rnd(inout uint s) { s = pcgHash(s); return float(s) * (1.0 / 4294967296.0)
 // BuildNeeCellLists in the layout nee_sampling.h describes (uint words, floats bit-cast).
 // Every name below MUST equal nee_sampling.h's (shader_mirror_test.cpp).
 layout(buffer_reference, scalar) readonly buffer NeeLists { uint w[]; };
-const float NEE_GLOBAL_FRAC    = 0.25;
+const float NEE_GLOBAL_FRAC    = 0.1;
 const uint  NEE_HDR_CELLS      = 0u;
 const uint  NEE_HDR_EMITTERS   = 1u;
 const uint  NEE_HDR_CELL_AT    = 2u;
@@ -464,26 +464,33 @@ const uint  NEE_HDR_EMIT_AT    = 6u;
 const uint  NEE_ENTRY_WORDS    = 3u;
 const uint  NEE_NO_CLUSTER     = 0xFFFFFFFFu;
 
+// The hit cell's list: its first entry and its count (nee_sampling.h's nee_cell_list).
+// neeCell < 0 (the bake), or lists built for another static set, give count 0. Read once
+// per hit, not per sample: each read is a trip to memory.
+uint neeCellList(NeeLists nee, int neeCell, uint omniStart, out uint first)
+{
+    first = 0u;
+    if (neeCell < 0 || nee.w[NEE_HDR_EMITTERS] != omniStart
+        || uint(neeCell) >= nee.w[NEE_HDR_CELLS])
+        return 0u;
+    uint c = nee.w[NEE_HDR_CELL_AT] + 2u * uint(neeCell);
+    first = nee.w[c];
+    return nee.w[c + 1u];
+}
+
 // The mixture pick of one static emitter (nee_sampling.h's nee_pick_mixture is the copy
 // the tests read). With probability NEE_GLOBAL_FRAC, the global draw over [0, omniStart);
-// otherwise a cluster from the hit's cell list, then a triangle in it. `pdf` is the
-// mixture's, so the sample is unbiased whichever draw made it (spec INV-1). neeCell < 0
-// (the bake), an empty list, or lists built for another static set give the global draw
-// alone, exactly as before DOOM-0653 (INV-4). cdfMax is the static prefix's top cdf.
-uint neePickStatic(Emitters emit, uint omniStart, float cdfMax, NeeLists nee, int neeCell,
-                   inout uint seed, out float pdf)
+// otherwise a cluster from the hit's cell list (first, count; neeCellList), then a triangle
+// in it. `pdf` is the mixture's, so the sample is unbiased whichever draw made it (spec
+// INV-1). An empty list gives the global draw alone, exactly as before DOOM-0653 (INV-4).
+// cdfMax is the static prefix's top cdf.
+uint neePickStatic(Emitters emit, uint omniStart, float cdfMax, NeeLists nee, uint first,
+                   uint count, inout uint seed, out float pdf)
 {
-    uint first = 0u, count = 0u;
-    if (neeCell >= 0 && nee.w[NEE_HDR_EMITTERS] == omniStart
-        && uint(neeCell) < nee.w[NEE_HDR_CELLS])
-    {
-        uint c = nee.w[NEE_HDR_CELL_AT] + 2u * uint(neeCell);
-        first = nee.w[c];
-        count = nee.w[c + 1u];
-    }
     float a  = count > 0u ? NEE_GLOBAL_FRAC : 1.0;
     float u0 = rnd(seed);
     uint  k;
+    uint  entry = NEE_NO_CLUSTER;       // the list entry the cluster draw took, if it ran
     // rnd can return exactly 1.0 (a uint near 2^32 rounds up as a float), so u0 < a alone
     // would send an empty list to the cluster draw, which reads a null NeeLists.
     if (count == 0u || u0 < a)
@@ -509,6 +516,7 @@ uint neePickStatic(Emitters emit, uint omniStart, float cdfMax, NeeLists nee, in
             if (uintBitsToFloat(nee.w[en + mid * NEE_ENTRY_WORDS + 1u]) < u) lo = mid + 1u;
             else                                                             hi = mid;
         }
+        entry = lo;
         uint cl = nee.w[NEE_HDR_CLUSTER_AT] + 2u * nee.w[en + lo * NEE_ENTRY_WORDS];
         uint tr = nee.w[NEE_HDR_TRI_AT];
         float u1 = rnd(seed);
@@ -525,11 +533,15 @@ uint neePickStatic(Emitters emit, uint omniStart, float cdfMax, NeeLists nee, in
     pdf = pg;
     if (count > 0u)
     {
-        // The cell's share of k's cluster, found by binary search on cluster id.
+        // The cell's share of k's cluster. The cluster draw knows its entry; after the
+        // global draw, a binary search on cluster id finds it (ids are unique in a list).
         uint  em = nee.w[NEE_HDR_EMIT_AT] + 2u * k;
         uint  ck = nee.w[em];
         float pc = 0.0;
-        if (ck != NEE_NO_CLUSTER)
+        if (entry != NEE_NO_CLUSTER)
+            pc = uintBitsToFloat(nee.w[nee.w[NEE_HDR_ENTRY_AT] + entry * NEE_ENTRY_WORDS + 2u])
+               * uintBitsToFloat(nee.w[em + 1u]);
+        else if (ck != NEE_NO_CLUSTER)
         {
             uint en = nee.w[NEE_HDR_ENTRY_AT];
             uint lo = first, hi = first + count;
@@ -720,16 +732,18 @@ vec3 shadeSurface(vec3 hitP, vec3 n, vec3 albedo, uint id, uint emitCount,
         if (omniStart > 0u)              // power-importance-sample the static set
         {
             vec3 direct = vec3(0.0), sdirect = vec3(0.0);
+            // DOOM-0377: the table covers the merged set, so the static prefix tops out at
+            // cdfMax = 1 - P(sprite lights), not 1; the pick renormalises to it. DOOM-0653:
+            // the pick mixes the global draw with the hit cell's list (neePickStatic).
+            float cdfMax = emit.e[(omniStart - 1u) * 14u + 12u];
+            uint  neeFirst;
+            uint  neeCount = neeCellList(nee, neeCell, omniStart, neeFirst);
             for (uint si = 0u; si < nSamples; si++)
             {
-                // DOOM-0377: the table covers the merged set, so the static prefix
-                // tops out at cdfMax = 1 - P(sprite lights), not 1; the pick
-                // renormalises to it. DOOM-0653: the pick mixes the global draw with
-                // the hit cell's list (neePickStatic).
-                float cdfMax = emit.e[(omniStart - 1u) * 14u + 12u];
                 if (cdfMax <= 0.0) break;     // no static emitter has any power
                 float pdf;
-                uint  lo = neePickStatic(emit, omniStart, cdfMax, nee, neeCell, seed, pdf);
+                uint  lo = neePickStatic(emit, omniStart, cdfMax, nee, neeFirst, neeCount,
+                                         seed, pdf);
                 vec3  wi;
                 vec3  c   = sampleEmitter(lo, hitP, n, pdf, omniStart, emit, 0.0, wi, seed);
                 vec3  rad = albedo * (1.0 / PI) * c; // reflected radiance (Lambert)
@@ -850,7 +864,9 @@ vec3 directNEEVerify(vec3 hitP, vec3 n, vec3 albedo, uint emitCount,
     float pdf;
     if (u < cdfMax)
     {
-        lo  = neePickStatic(emit, omniStart, cdfMax, nee, neeCell, seed, pdf);
+        uint neeFirst;
+        uint neeCount = neeCellList(nee, neeCell, omniStart, neeFirst);
+        lo  = neePickStatic(emit, omniStart, cdfMax, nee, neeFirst, neeCount, seed, pdf);
         pdf *= cdfMax;
     }
     else

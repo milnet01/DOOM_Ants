@@ -604,7 +604,7 @@ inline bool ProbeBlendSH(const float* buf, float px, float py, float pz, float s
 // Clusters listed per cell. Sized from the worst cell over every IWAD map (spec 7 B1).
 static const uint32_t NEE_CELL_LIGHTS = 32;
 // The estimate's distance floor, so a cluster at the cell does not take its whole list.
-static const float    NEE_NEAR        = 64.0f;
+static const float    NEE_NEAR        = 16.0f;
 // No cluster further than this from a cell's box is listed in it.
 static const float    NEE_LIST_RANGE  = 2048.0f;
 // Cells ranked together by BuildNeeCellLists, per side (a speed setting: the lists do not
@@ -679,6 +679,7 @@ inline ListStats BuildNeeCellLists(const Grid& g, const float* cx, const float* 
     std::vector<uint32_t> entries;
     std::vector<int> live;                       // clusters with power
     for (int c = 0; c < nc; c++) if (power[(size_t)c] > 0.0) live.push_back(c);
+    entries.reserve(cells * std::min<size_t>(cap, live.size()) * NEE_ENTRY_WORDS);
     const float near2 = NEE_NEAR * NEE_NEAR, range2 = NEE_LIST_RANGE * NEE_LIST_RANGE;
     // a before b: the larger estimate, ties to the lower id. As a heap order it puts the
     // worst kept entry at the front.
@@ -691,7 +692,6 @@ inline ListStats BuildNeeCellLists(const Grid& g, const float* cx, const float* 
     // make them, at a fraction of the scan.
     const int B = NEE_BLOCK;
     std::vector<std::pair<float, uint32_t>> l, order;
-    std::vector<std::vector<uint32_t>> cellEntries(cells);
     for (int by0 = 0; cells && by0 < g.h; by0 += B)
     for (int bx0 = 0; bx0 < g.w; bx0 += B)
     {
@@ -755,20 +755,17 @@ inline ListStats BuildNeeCellLists(const Grid& g, const float* cx, const float* 
             w.resize(l.size()); cdf.resize(l.size()); pdf.resize(l.size());
             for (size_t k = 0; k < l.size(); k++) w[k] = l[k].first;
             nee_build_cdf(w.data(), (int)l.size(), cdf.data(), pdf.data());
-            std::vector<uint32_t>& ce = cellEntries[cell];
+            // Cells are filled a block at a time, so the entries are not in cell order:
+            // each cell's two words say where its own run starts.
+            out[NEE_HDR_WORDS + 2 * cell]     = (uint32_t)(entries.size() / NEE_ENTRY_WORDS);
+            out[NEE_HDR_WORDS + 2 * cell + 1] = (uint32_t)l.size();
             for (size_t k = 0; k < l.size(); k++)
             {
-                ce.push_back(l[k].second);
-                ce.push_back(NeeBits(cdf[k]));
-                ce.push_back(NeeBits(pdf[k]));
+                entries.push_back(l[k].second);
+                entries.push_back(NeeBits(cdf[k]));
+                entries.push_back(NeeBits(pdf[k]));
             }
         }
-    }
-    for (size_t cell = 0; cell < cells; cell++)
-    {
-        out[NEE_HDR_WORDS + 2 * cell]     = (uint32_t)(entries.size() / NEE_ENTRY_WORDS);
-        out[NEE_HDR_WORDS + 2 * cell + 1] = (uint32_t)(cellEntries[cell].size() / NEE_ENTRY_WORDS);
-        entries.insert(entries.end(), cellEntries[cell].begin(), cellEntries[cell].end());
     }
     out[NEE_HDR_ENTRY_AT] = (uint32_t)out.size();
     out.insert(out.end(), entries.begin(), entries.end());

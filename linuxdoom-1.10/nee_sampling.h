@@ -119,7 +119,7 @@ static inline int nee_pick_static(const float* cdf, const float* pdf, int omniSt
 //   tris     two per triangle, grouped by cluster: emitter index, in-cluster cdf
 //   emit     two per static emitter: cluster id (NEE_NO_CLUSTER for none), in-cluster pdf
 // Each name below MUST equal pt_common.glsl's (shader_mirror_test.cpp).
-static const float    NEE_GLOBAL_FRAC    = 0.25f;
+static const float    NEE_GLOBAL_FRAC    = 0.1f;
 static const uint32_t NEE_HDR_CELLS      = 0;   // cell count (the seep grid's)
 static const uint32_t NEE_HDR_EMITTERS   = 1;   // the static emitter count the lists index
 static const uint32_t NEE_HDR_CELL_AT    = 2;   // word offsets of each section

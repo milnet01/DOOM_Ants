@@ -335,13 +335,12 @@ layout(push_constant) uniform PC {
 #include "formulas/surface_detail.glsl"
 
 // --- Camera-only shading constants (build step 3c/4b-iii) --------------------
-const uint  NEE_SAMPLES = 6u;          // shadow rays/pixel. Emitters are picked by
-                                       // POWER (3c-2, cdf binary search), so a few
-                                       // samples land on the lights that matter. Raised
-                                       // 4->6 in step 6c: the half-res lighting trace
-                                       // casts these for only 1/4 of pixels, so 6 still
-                                       // costs less than the old full-res 4 — spend the
-                                       // freed budget on cleaner input (less source noise).
+const uint  NEE_SAMPLES = 4u;          // shadow rays/pixel. Emitters are picked mostly
+                                       // from the hit cell's list (DOOM-0653), so few
+                                       // samples are wasted on lights that face away,
+                                       // and more of them trace a shadow ray. At 6 that
+                                       // cost E3M6 3.9 ms; 4 costs what the old pick's 6
+                                       // did, with far less grain (spec DOOM-0653 § 7).
 const float AMBIENT_FLOOR = 0.02;      // tiny fill for a triangle with no GI probe
                                        // (untagged) so it isn't pure black — the
                                        // step-4 probe bounce is the real fill now.

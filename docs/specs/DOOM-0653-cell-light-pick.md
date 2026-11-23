@@ -1,7 +1,7 @@
 <!-- ants-spec-format: 1 -->
 # DOOM-0653 — The traced view picks wall and floor lights by what reaches the point
 
-**Status:** accepted (2026-11-22); B1 built (2026-11-23).
+**Status:** accepted (2026-11-22); B1 and B2 built (2026-11-23); awaits the user's look.
 **Kind:** fix.
 **Source:** ROADMAP DOOM-0653 (light lab handoff, 2026-11-21).
 **Builds on:** DOOM-0652 (the shared light grid: `ClusterStaticLights`, the seep grid, the
@@ -151,9 +151,10 @@ not a stand-in, against `directAllLights`.
   binding 5) as a `uvec2` (`GL_EXT_buffer_reference_uvec2`); the push range is full
   (`pc.misc7` closes it at 256 bytes). The cell is `fogLightCell(hitP.xy)`. `shadeSurface`
   takes the address and the cell; the bake passes cell −1.
-- Constants: `NEE_GLOBAL_FRAC` 0.25, mirrored between `nee_sampling.h` and `pt_common.glsl`
-  with the layout's names. `NEE_CELL_LIGHTS` 32, `NEE_NEAR` 64 and `NEE_LIST_RANGE` 2048 are
-  read by the CPU builder alone, in `light_grid.h`. B2 tunes them.
+- Constants: `NEE_GLOBAL_FRAC` 0.1, mirrored between `nee_sampling.h` and `pt_common.glsl`
+  with the layout's names. `NEE_CELL_LIGHTS` 32, `NEE_NEAR` 16 and `NEE_LIST_RANGE` 2048 are
+  read by the CPU builder alone, in `light_grid.h`. B2's sweep (§ 7) set the share and the
+  near floor.
 
 ## 6. Performance budget
 
@@ -174,6 +175,53 @@ Each stage ends with `make`, `make test` and the § 8 checks.
   courtyard's figure for DOOM-0566.
 - **B2 — Tune and judge.** Sweep `NEE_GLOBAL_FRAC` and `NEE_NEAR` against the speck counts.
   Real-display timings for § 6. Captures for the user to judge, `-rtview 6`, before and after.
+
+  The sweep, 2026-11-23: DEV builds, `cap.sh` at INV-5's two spots, `speck.py`, 6 samples.
+  The start room repeats exactly. The courtyard catches one of two frames of its animated
+  glowing floor, told apart by the dim share `speck.py` prints: about 61.8 % or about
+  62.2 %. The second reads about 1.4 specks lower on the same binary (B1: 15.28 against
+  13.86–14.12). Nothing freezes flat animation for a capture. Same-day pre-B1: 77.26 and
+  24.23.
+
+  | `NEE_GLOBAL_FRAC` | `NEE_NEAR` | Start room | Courtyard (dim share) |
+  |---|---|---|---|
+  | 0.25 | 64 (B1) | 4.28 | 15.32 (61.8) |
+  | 0.25 | 128 | 4.40 | 14.01 (62.2) |
+  | 0.25 | 32 | 4.30 | 13.49 (62.3) |
+  | 0.1 | 128 | 2.98 | 14.97 (61.7) |
+  | 0.1 | 64 | 2.89 | 14.75 (61.7) |
+  | 0.1 | 32 | 2.92 | 12.61 (62.2) |
+  | 0.05 | 32 | 2.76 | 12.53 (62.2) |
+  | 0.1 | 16 (shipped) | 2.92 | 12.00 (62.2), 13.40–13.49 (61.8) |
+
+  On the frame both share, the shipped pair reads 13.4 against B1's 15.3. INV-5's courtyard
+  bar of 12.1 is met on one frame and missed on the other. The courtyard with sky light alone
+  (`-lightlab 0`) reads 6.71, a floor this pick cannot lower.
+
+  Timings, 2026-11-23: a held machine and the shared GPU lock, `d0653/mk.sh` for the
+  megakernel (Ultra traced, scale 100, cage), `d0653/rvmap.sh` for the list build. Runs that
+  another GPU user disturbed are dropped; the kept repeats agree within 0.4 ms.
+
+  | Build | E1M4 | E3M6 | MAP24 list build |
+  |---|---|---|---|
+  | Pre-B1 (3a86047), 6 samples | 10.68 | 19.44 | — |
+  | B1, 6 samples | — | — | 19.6–21.9 |
+  | B2 pick, 6 samples | 11.45 | 23.30 | 16.2–17.2 |
+  | B2 pick, 5 samples | 10.74 | 21.56 | |
+  | B2 pick, 4 samples (shipped) | 10.13 | 19.85 | |
+
+  The pick itself costs nothing: forcing `NEE_GLOBAL_FRAC` 1 through the B2 code times as
+  pre-B1 (E3M6 19.42). The cost at 6 samples is the shadow rays. The old pick's samples
+  often fell on lights facing away, which cast none; the lists find lights that reach the
+  point, and each of those casts one. So `NEE_SAMPLES` (`pathtrace.comp`) drops from 6 to 4.
+  At 4 the start room reads 5.68 and the courtyard 14.34 (dim 62.5). E3M6 stays 0.41 ms over
+  pre-B1, 0.11 ms past § 6's budget.
+
+  The list builder writes each cell's entries straight into one array (it kept a vector per
+  cell). The synthetic builder bench (`d0653/bench.cpp`) went from 39–50 ms to 22–24 ms.
+  `shadeSurface` reads the cell's list once per hit, not per sample, and a cluster draw
+  takes its pdf from the entry it drew. Neither changes a pixel: the start room's capture is
+  byte-identical.
 
 ## 8. Invariants
 
@@ -216,7 +264,12 @@ Each stage ends with `make`, `make test` and the § 8 checks.
   DOOM-0652's grid already exists and its cells are small next to a room.
 - **Per-point RIS over the cell's whole list.** Normal-aware, but it loops every listed
   cluster per sample, and the megakernel's register pressure is already the RDNA2 limit
-  (DOOM-0120's note). Kept as B2's fallback over a few cell candidates (§ 10).
+  (DOOM-0120's note).
+- **RIS over a few candidates drawn from the mixture.** Each static sample draws M candidates
+  and keeps one by its unshadowed contribution, as the sprite loop does. Tried in B2
+  (2026-11-23, at 0.25 and 64): M = 4 gave 1.48 and 12.94 specks, M = 8 gave 1.33 and 10.67.
+  But M = 8 ran the megakernel at 35–78 ms against B1's 12–26 (E1M4, E3M6, `d0653/mk.sh`,
+  a shared GPU), far past § 6's 0.3 ms.
 - **Cell lists without the global share.** Cheaper and simpler, but a light the list missed
   (a door opened, a light past `NEE_LIST_RANGE`) would vanish from the picture: bias, not
   noise.
@@ -224,8 +277,6 @@ Each stage ends with `make`, `make test` and the § 8 checks.
 
 ## 10. Open questions
 
-- If B2 misses INV-5's target, draw a few clusters from the cell's cdf and resample one by its
-  unshadowed weight at the point (RIS), which adds the surface's facing.
 - A door that opens does not refresh the lists, so a light seen through it stays reachable
   only through the global share: no worse than today. Refreshing the cells a redrawn polar map
   reaches is the fix if it shows.
