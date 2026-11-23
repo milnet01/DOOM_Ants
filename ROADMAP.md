@@ -21388,6 +21388,10 @@ in CLAUDE.md describes.
   d0653 look4_cmp_*.png, raw4_cmp_*.png.
   Closed 2026-11-23: B1-B2 built (last cb42a27). User accepted the
   look and chose 4 light samples per pixel over 6 the same day.
+  ExperiRays EXRAY-0048/0049 (2026-11-23), independent check: on
+  E1M1, 4 picks at share 0.1 converged about 6 % faster than 8 picks,
+  beyond the repeat spread (within 1.5 %). On UT_Ants' DM-MementoMori
+  all settings tied. All three engines keep 4 picks at 0.1.
   **Layman:** In the ray-traced view, dark corners look grainy because the game spends its light samples on bright lamps far away instead of the ones nearby.
   Kind: fix.
   Source: user-2026-11-21 (light lab handoff).
