@@ -1,7 +1,7 @@
 <!-- ants-spec-format: 1 -->
 # DOOM-0653 — The traced view picks wall and floor lights by what reaches the point
 
-**Status:** accepted (2026-11-22); B1 and B2 built (2026-11-23); awaits the user's look.
+**Status:** Shipped (2026-11-23, cb42a27). B1 and B2 built; user accepted the look and chose 4 samples 2026-11-23.
 **Kind:** fix.
 **Source:** ROADMAP DOOM-0653 (light lab handoff, 2026-11-21).
 **Builds on:** DOOM-0652 (the shared light grid: `ClusterStaticLights`, the seep grid, the

@@ -21343,7 +21343,7 @@ in CLAUDE.md describes.
   Source: user-2026-11-21.
   Evidence: linuxdoom-1.10/dev-shots/shot-0103.png, linuxdoom-1.10/dev-shots/shot-0100.png
 
-- 📋 [DOOM-0653] **Traced view speckles in dim areas: NEE picks lights by global power, not by what reaches the point.**
+- ✅ [DOOM-0653] **Traced view speckles in dim areas: NEE picks lights by global power, not by what reaches the point.**
   shadeSurface in pt_common.glsl picks a static emitter by a power CDF
   over the whole map, so a dim corner far from the brightest lights
   spends most samples on lights that give it nothing. Plan: pick from
@@ -21386,6 +21386,8 @@ in CLAUDE.md describes.
   Denoised -rtview 6 stills: start room 0.20 -> 0.25, courtyard 0.72
   -> 1.18 (6 samples: 0.69). Awaits the user's look; Scratchpad
   d0653 look4_cmp_*.png, raw4_cmp_*.png.
+  Closed 2026-11-23: B1-B2 built (last cb42a27). User accepted the
+  look and chose 4 light samples per pixel over 6 the same day.
   **Layman:** In the ray-traced view, dark corners look grainy because the game spends its light samples on bright lamps far away instead of the ones nearby.
   Kind: fix.
   Source: user-2026-11-21 (light lab handoff).
