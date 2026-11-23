@@ -21441,6 +21441,12 @@ in CLAUDE.md describes.
   light in, this is the light-lab key line (see the sibling item), not a
   renderer bug. User likes this setting's look otherwise ("awesome,
   could be better").
+  User 2026-11-23: bounce on or off makes no visible difference, only
+  the frame rate changes. Shots 0290 (-lightlab 111, bounce on) and 0291
+  (79, off) at -warpto -9 86 348: whole-image mean absolute difference
+  2.2 %, about traced-frame noise. So the key press is not the cause;
+  find what bounce actually changes in the traced view (sky light
+  reaching the room through the opening), and why it barely shows.
   **Layman:** Light from the bright courtyard should spill into the room next to it, but the room stays black.
   Kind: investigate.
   Source: user-report-2026-11-23.
