@@ -1,6 +1,6 @@
 <!-- ants-roadmap-format: 1 -->
 <!-- Generated from the Ants Terminal roadmap store. Edit it with roadmap_log; hand edits are discarded by the next write. -->
-<!-- ants-roadmap-id-high-water: DOOM=656 -->
+<!-- ants-roadmap-id-high-water: DOOM=660 -->
 
 # Roadmap
 
@@ -21419,6 +21419,56 @@ in CLAUDE.md describes.
   Kind: investigate.
   Source: found-2026-11-23-DOOM-0653.
   Lanes: renderer, tests.
+
+- 📋 [DOOM-0657] **Light lab: say what each key press switched on or off, by name.**
+  User 2026-11-23: "Sometimes it will say everything but torch. That
+  doesn't tell me what that button actually turned on and off." The
+  on-screen line today names the whole state ("All on except: ...").
+  Want: on each press, a line naming the key's light kind and its new
+  state (e.g. "6 bounce light: off"), plus the full state. The F12 note
+  should keep the state as now. Context: shots 0286-0289 read -lightlab
+  79 (bounce off) where the user meant to turn bounce on.
+  **Layman:** When you press a number key in the light lab, the screen should say exactly what that key turned on or off, not just what is still on.
+  Kind: ux.
+  Source: user-report-2026-11-23.
+  Lanes: renderer.
+
+- 📋 [DOOM-0658] **E2M1: outdoor light does not bounce into the start room in the light lab.**
+  User 2026-11-23, shot 0286 (repeat line: -warp 2 1 -skill 3
+  -warpto -117 12 345 -lightlab 79), Ultra traced. The F12 note says
+  bounce (key 6) was OFF though the user meant it on, so first capture
+  the spot at -lightlab 111 against 79: if bounce brings the courtyard
+  light in, this is the light-lab key line (see the sibling item), not a
+  renderer bug. User likes this setting's look otherwise ("awesome,
+  could be better").
+  **Layman:** Light from the bright courtyard should spill into the room next to it, but the room stays black.
+  Kind: investigate.
+  Source: user-report-2026-11-23.
+  Lanes: renderer.
+
+- 📋 [DOOM-0659] **E2M1's glowing red wall blocks are mostly black in the traced view.**
+  User 2026-11-23, shot 0289 (-warp 2 1 -skill 3 -warpto 237 452
+  345 -lightlab 79), Ultra traced: the wall of red blocks around the
+  inverted cross. Their glow and bloom are liked; the blocks show large
+  black patches between bright spots. Find the texture and its emissive
+  mask (DOOM-0302 emisWeight, galbedo.a) and why the dark texels stay
+  black under a glow this strong.
+  **Layman:** The red glowing blocks give a great glow, but the blocks themselves are full of black patches that make no sense next to their glow.
+  Kind: fix.
+  Source: user-report-2026-11-23.
+  Lanes: renderer.
+
+- 📋 [DOOM-0660] **Make the teleporter's pentagram and circle give off a little light.**
+  User 2026-11-23, shot 0288 (-warp 2 1 -skill 3 -warpto 29 510 130
+  -lightlab 79), Ultra traced: the red pentagram-and-circle flat on the
+  floor and ceiling. Want a small glow from the star and circle lines
+  only. Find the flat name and add it to the emissive set with a mask on
+  its lines; check both views (Solid gets it too, per CLAUDE.md's tier
+  table).
+  **Layman:** The teleporter pad's star and circle should glow faintly.
+  Kind: feature.
+  Source: user-report-2026-11-23.
+  Lanes: renderer.
 
 ## 0.13.0 — The player's experience
 
