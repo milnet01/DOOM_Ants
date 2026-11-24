@@ -23,6 +23,7 @@
 //
 //-----------------------------------------------------------------------------
 
+#include <ctype.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -549,18 +550,26 @@ void I_LightLabSummary(char* out, int size)
 static void I_LightLabKey(int digit)
 {
     extern int rb_flashlight;           // r_vulkan.cpp
-    char msg[64];
+    char msg[64], state[48];
+    int  nowOn = 0;
 
     if (digit == 0)
 	rb_lightlab = 0, rb_flashlight = 0;
     else if (digit == 9)
 	rb_lightlab = LAB_ALL, rb_flashlight = 1;
     else if (labKinds[digit - 1].bit)
-	rb_lightlab ^= labKinds[digit - 1].bit;
+	nowOn = ((rb_lightlab ^= labKinds[digit - 1].bit) & labKinds[digit - 1].bit) != 0;
     else
-	rb_flashlight = !rb_flashlight;
+	nowOn = rb_flashlight = !rb_flashlight;
 
-    I_LightLabSummary(msg, (int)sizeof msg);
+    // DOOM-0657: a 1-8 press first names what it switched ("Bounce OFF."), then the whole
+    // state; 0 and 9 switch everything, so the state alone says it.
+    I_LightLabSummary(state, (int)sizeof state);
+    if (digit == 0 || digit == 9)
+	snprintf(msg, sizeof msg, "%s", state);
+    else
+	snprintf(msg, sizeof msg, "%c%s %s. %s", toupper(labKinds[digit - 1].name[0]),
+		 labKinds[digit - 1].name + 1, nowOn ? "ON" : "OFF", state);
     I_DebugKeyMessage(msg);
 }
 
