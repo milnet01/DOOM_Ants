@@ -60,6 +60,7 @@
 #include "emissive_derive.h"
 #include "light_grid.h"     // DOOM-0652: the raster light grid
 #include "sky_vis.h"        // DOOM-0651: what outdoor air a fog cell can see
+#include "sky_spot.h"       // DOOM-0658: stronger sky fill at a picked spot
 #include "surface_derive.h"     // DOOM-0273: surf::kLiquidFlats, the surface-map derive
 
 // DOOM-0042 Ultra HD PBR materials. rb_materials.h is header-only (inline pure
@@ -100,6 +101,8 @@ extern "C" {
     // (no -fshort-enums; enums default to int width here), so declaring it `int` across the
     // C/C++ boundary is safe but not a like-for-like mirror of the rendermode dodge.
     extern int gamemode;                        // doomdef.h: GameMode_t
+    // DOOM-0658: which map is loaded, for its sky spot (doomstat.h, r_state.h).
+    extern int gameepisode, gamemap, numsectors, numlines;
     // DOOM-0011 L3: the map's own line-of-sight test, for the fog-light bake (p_sight.c).
     // Mirrored here for the same reason as the externs above -- p_local.h pulls the whole
     // playsim header chain, and this file needs exactly one function out of it. `fixed_t`
@@ -107,6 +110,8 @@ extern "C" {
     // `boolean`, an int-width enum, mirrored as int by the same reasoning as gamemode.
     int P_CheckSightTrace(int x1, int y1, int z1, int x2, int y2, int zBot, int zTop);
 }
+// doomdef.h GameMode_t: shareware=0, registered=1, commercial=2, retail=3.
+static const int kGameModeCommercial = 2;
 
 // The GPU control struct mirrors this byte-for-byte in pathtrace.comp (std430).
 static_assert(sizeof(rb_matctrl_t) == 48, "rb_matctrl_t must be 48 bytes (std430 MatCtrl)");
@@ -3136,9 +3141,10 @@ void CreateBakePipeline()
     // Push constant: uvec4 (probeCount/numWall/emitterCount/giEnabled) + 8 uint64
     // buffer addresses (verts, emit, matEmis, probes, prevProbes, direct, + DOOM-0119
     // emitSec/reject — always 0 here, but the shared shadeSurface references them so
-    // the range must cover them) = 80 bytes. MUST match sizeof(BakePush) below.
+    // the range must cover them) + DOOM-0658's two vec4s for the sky spot = 112 bytes.
+    // MUST match sizeof(BakePush) below.
     VkDescriptorSetLayout setLayouts[2] = { g.bakeDsLayout, g.dsLayout };
-    CreateComputeLayout(setLayouts, 2, 80, "bake", &g.bakePipeLayout);
+    CreateComputeLayout(setLayouts, 2, 112, "bake", &g.bakePipeLayout);
     CreateComputePipe(bake_comp_spv, bake_comp_spv_len, g.bakePipeLayout, "bake", &g.bakePipeline);
 }
 
@@ -9485,14 +9491,23 @@ void RunGiBake()
         uint64_t directAddr;    // DOOM-0652 B4: pass 1's direct-light SH, 12 floats a probe
         uint64_t emitSecAddr;   // DOOM-0119: always 0 (the bake's REJECT cull is dead);
         uint64_t rejectAddr;    // present only to match the shared shadeSurface signature.
+        float    spotLo[4];     // DOOM-0658: the sky spot's box, xyz; w = its gain (1 = none)
+        float    spotHi[4];
     } bp = {};
-    static_assert(sizeof(BakePush) == 80, "bake push-constant layout must match the shader");
+    static_assert(sizeof(BakePush) == 112, "bake push-constant layout must match the shader");
     bp.misc[0]     = g.probeCount;
     bp.misc[1]     = (uint32_t)g.matNumWall;
     bp.misc[2]     = LightKindOn(LAB_BOUNCE) ? g.emitCount : 0u;   // 0: sky fill alone
     bp.vertsAddr   = BufferAddress(g.vbuf);
     bp.emitAddr    = g.emitBuf ? BufferAddress(g.emitBuf) : 0;
     bp.matEmisAddr = BufferAddress(g.matEmisBuf);
+    bp.spotLo[3]   = 1.0f;
+    if (const rb_sky_spot_t* spot = RB_SkySpotFor(gamemode == kGameModeCommercial, gameepisode,
+                                                  gamemap, numsectors, numlines))
+    {
+        for (int k = 0; k < 3; k++) { bp.spotLo[k] = spot->lo[k]; bp.spotHi[k] = spot->hi[k]; }
+        bp.spotLo[3] = spot->gain;
+    }
     // DOOM-0652 B4: pass 1 writes its direct light here and passes 2+ add it back, so
     // only pass 1 traces shadow rays. Lives for this bake only.
     VkBuffer       directBuf = VK_NULL_HANDLE;
@@ -9780,9 +9795,6 @@ bool RB_RtVerify()
     // Raising spp can only TIGHTEN a variance-limited gate, which is why plutonia, tnt
     // and any PWAD over DOOM 2 can safely inherit the higher count -- an inherited BAR
     // would have hidden a real defect instead. Spec DOOM-0009 INV-6.
-    //
-    // doomdef.h GameMode_t: shareware=0, registered=1, commercial=2, retail=3.
-    const int  kGameModeCommercial = 2;
     const bool doom2   = (gamemode == kGameModeCommercial);
     const uint32_t neeD   = doom2 ? 4096u : 256u;   // x64 spp: 262144 vs 16384
     const uint32_t bruteD = doom2 ?  256u :  64u;   // x64 spp:  16384 vs  4096

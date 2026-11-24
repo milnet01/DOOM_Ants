@@ -52,6 +52,8 @@ layout(push_constant) uniform PC {
     EmitSec  emitSec;  // DOOM-0119: unused here (always 0) — the bake's omni loop is
     Reject   reject;   // empty (omniStart == emitCount), so shadeSurface's REJECT cull
                        // is dead; passed only to satisfy the shared signature.
+    vec4     spotLo;   // DOOM-0658: sky_spot.h's box for this map, xyz; w = the gain
+    vec4     spotHi;   // inside it (1 everywhere when the map has no spot)
 } pc;
 
 const uint  BAKE_RAYS = 128u;   // sphere samples/probe. SH-L1 is very low frequency,
@@ -101,6 +103,10 @@ void main()
         if (pc.prevProbes.p[base + 3u] == 0.0)
             return;                              // inside solid map: readers skip it
     }
+
+    // DOOM-0658: a probe inside the map's sky spot takes a stronger sky fill.
+    const float skyGain = all(greaterThanEqual(P, pc.spotLo.xyz)) && all(lessThanEqual(P, pc.spotHi.xyz))
+                        ? pc.spotLo.w : 1.0;
 
     // SH-L1 radiance accumulators per colour channel (4 coeffs each: l=0 + 3*l=1).
     vec4 shR = vec4(0.0), shG = vec4(0.0), shB = vec4(0.0);
@@ -192,7 +198,7 @@ void main()
         {
             // Ray escaped through the sky: bounded sky-light fill. It is direct light, so
             // a bounce pass gets it back from pc.direct.
-            Li = bounce ? vec3(0.0) : SKY_COLOR;
+            Li = bounce ? vec3(0.0) : SKY_COLOR * skyGain;
         }
 
         // The same non-finite guard pathtrace.comp applies to shadeSurface's result
