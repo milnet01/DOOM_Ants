@@ -164,6 +164,7 @@ vec2 hdWDx, hdWDy;   // the world coordinate's
 #define HD_POM_STEPS_GRAZING 24
 #include "formulas/hd_surface.glsl"
 #include "formulas/bubbles.glsl"        // DOOM-0619: shared with the trace
+#include "formulas/glow_lines.glsl"     // DOOM-0660: shared with the trace
 #endif
 
 const int FLAG_FLAT    = 0x1;   // matches RB_MESH_FLAT in r_mesh.h
@@ -476,6 +477,7 @@ void main()
         discard;
 
     vec3  albedo  = texture(paletteTex, vec2((index + 0.5) / 256.0, 0.5)).rgb;
+    const vec3 artAlbedo = albedo;   // the original art's texel, before HD art or filth
 
 #ifndef SINGLE_TARGET
     // DOOM-0508: a Spectre draws no colour. The world pipeline drops it so what stands behind
@@ -742,6 +744,15 @@ void main()
 
 #ifndef SINGLE_TARGET
     ambient *= hdOcc;   // DOOM-0182: the HD AO map; 1.0 on everything else
+    // DOOM-0660: a teleporter's drawn lines glow here as in the trace. The lines are found
+    // in the original art, as the trace finds them; Ultra's HD pad is darker and would pass
+    // the test over its whole field. The control table is bound in Solid too
+    // (InitHdDefault), so this needs no HD pipeline.
+    if ((vFlags & FLAG_FLAT) != 0 && id < ctrl.length() && (ctrl[id].flags & GLOW_LINES) != 0u)
+        hdGlow = max(hdGlow, glowLinesMask(vec3(srgbToLinear(artAlbedo.r), srgbToLinear(artAlbedo.g),
+                                                srgbToLinear(artAlbedo.b)))
+                             * vec3(srgbToLinear(kGlowLinesShown.r), srgbToLinear(kGlowLinesShown.g),
+                                    srgbToLinear(kGlowLinesShown.b)));
     if (glowOff)
         hdGlow = vec3(0.0);   // no surface shows its own glow (-skyonly, the light lab)
     // DOOM-0538: a lit screen or lamp shows whatever the room's light. DIRECT, so AO never dims

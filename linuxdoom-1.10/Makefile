@@ -456,6 +456,12 @@ $(SHADER_DIR)/pathtrace.comp.spv.h \
 $(SHADER_DIR)/mesh.frag.spv.h $(SHADER_DIR)/mesh_overlay.frag.spv.h: \
 		$(SHADER_DIR)/formulas/model_fade.glsl
 
+# DOOM-0660 — the teleporter line glow is shared by the path tracer and both variants of
+# the raster mesh.frag. Same missing-auto-dep hazard as the rules above.
+$(SHADER_DIR)/pathtrace.comp.spv.h \
+$(SHADER_DIR)/mesh.frag.spv.h $(SHADER_DIR)/mesh_overlay.frag.spv.h: \
+		$(SHADER_DIR)/formulas/glow_lines.glsl
+
 # DOOM-0619 — the rising bubbles are shared by the path tracer and the raster mesh.frag.
 # Same missing-auto-dep hazard as the rules above.
 $(SHADER_DIR)/pathtrace.comp.spv.h \
