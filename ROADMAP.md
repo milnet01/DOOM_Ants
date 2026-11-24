@@ -21460,6 +21460,17 @@ in CLAUDE.md describes.
   try a bake sky fill that follows the visible sky, under the lab /
   sourcedLightOnly first, and show the user. Pictures: Scratchpad
   d0658/grid.png, looks.png.
+  Experiment 2026-11-24 (throwaway builds, bake.comp sky fill scaled;
+  not committed). x4: probes' mean DC 0.006 -> 0.013, picture barely
+  moves (facing the opening 57.24 -> 57.41). x16: DC 0.043-0.076; facing
+  the opening 60.09 and the walls beside it read blue-lit; facing 348
+  23.76 -> 26.52 with the room's walls visible. So sky light through the
+  opening does reach the room once the sky's light is strong enough: the
+  lever is the sky fill's strength (and the lack of any sun light on
+  surfaces), not the bounce. A stronger sky changes every outdoor scene,
+  so it is DOOM-0642's call and the user's look. Pictures: Scratchpad
+  d0658/sky16grid.png (top: facing the opening, normal vs x16; bottom:
+  facing 348).
   **Layman:** Light from the bright courtyard should spill into the room next to it, but the room stays black.
   Kind: investigate.
   Source: user-report-2026-11-23.
