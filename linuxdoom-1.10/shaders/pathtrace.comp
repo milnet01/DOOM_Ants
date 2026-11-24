@@ -631,8 +631,12 @@ bool  isLiquid(MatCtrl mc) { return (mc.flags & (LIQUID_NUKAGE | LIQUID_LAVA)) !
 // DOOM-0511: a liquid's weight is NEGATIVE (-1). The sign carries "show this glow flat"
 // to shownEmission (formulas/shown_emission.glsl) through galbedo.a, where the
 // composite cannot see MatCtrl.
+// DOOM-0659: a GLOW_WHOLE wall weighs 1 everywhere, so shownEmission shows each texel's
+// own albedo at the cap: the whole face glows in the texture's colours.
+const uint GLOW_WHOLE = 128u;      // rb_materials.h RB_FLAG_GLOW_WHOLE
 float emisWeight(MatCtrl mc, vec3 albedo) {
-    return isLiquid(mc) ? -1.0 : emissiveMask(albedo);
+    if (isLiquid(mc)) return -1.0;
+    return (mc.flags & GLOW_WHOLE) != 0u ? 1.0 : emissiveMask(albedo);
 }
 bool  wetOn()              { return (pc.misc6.y & 1u) != 0u; }
 bool  sourcedLightOnly()   { return (pc.misc6.y & 2u) != 0u; }   // DOOM-0642's test switch

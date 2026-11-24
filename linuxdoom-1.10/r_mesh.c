@@ -2539,6 +2539,20 @@ int RB_WallTexDimLight(int texnum)
     return 0;
 }
 
+// DOOM-0659: listed walls that are glowing material through and through, so every
+// texel shows the glow in its own colour. The bright-texel mask suits a lamp on a dark
+// stand; on REDWALL1 it left the darker red of each block black beside its bright spots.
+static char wall_glow_whole[][9] = { "REDWALL1" };
+
+int RB_WallTexGlowsWhole(int texnum)
+{
+    int i;
+    for (i = 0; i < (int)(sizeof(wall_glow_whole) / sizeof(wall_glow_whole[0])); i++)
+        if (R_CheckTextureNumForName(wall_glow_whole[i]) == texnum)
+            return 1;
+    return 0;
+}
+
 float RB_WallTexCastScale(int texnum)
 {
     int i;

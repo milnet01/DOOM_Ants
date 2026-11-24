@@ -7316,7 +7316,9 @@ static void InitHdDefault()
         table[i].flags    = 0u;
         table[i].usePBR   = 0u;
     }
-    g.hdGrungeIdx = -1;                 // DOOM-0179: no grime on the default all-paletted set
+    for (int t = 0; t < g.matNumWall && t < N; t++)   // DOOM-0659, as FlagGlowWholeWalls
+        if (RB_WallTexGlowsWhole(t)) table[t].flags |= RB_FLAG_GLOW_WHOLE;
+    g.hdGrungeIdx = -1;                // DOOM-0179: no grime on the default all-paletted set
     g.hdDirtIdx = -1;                   // DOOM-0181: no dirt-colour texture on the paletted set
     BuildHdSet({}, table.data(), N);   // empty srcs -> 1x1 dummy image; all paletted
 }
@@ -7332,6 +7334,15 @@ static void FlagLiquidFlats(rb_matctrl_t* table, int N)
         int id = LiquidFlatId(e.name, g.matNumWall, g.matNumFlat);
         if (id >= 0 && id < N) table[id].flags |= e.bit;
     }
+}
+
+// DOOM-0659: flag the walls whose whole face glows. Both control tables take it (Solid's
+// all-paletted default and Ultra's), so the two tiers show the same glow. A wall's
+// unified id is its texnum.
+static void FlagGlowWholeWalls(rb_matctrl_t* table, int N)
+{
+    for (int t = 0; t < g.matNumWall && t < N; t++)
+        if (RB_WallTexGlowsWhole(t)) table[t].flags |= RB_FLAG_GLOW_WHOLE;
 }
 
 // Where the HD assets are (DOOM-0410). The default used to be the launch directory, so
@@ -7429,6 +7440,7 @@ static bool LoadHdMaterials(bool usePack)
     rb_build_ctrl_table(rows.data(), (int)rows.size(), N, &ResolveDoomName, table.data(), &dups);
     if (dups) printf("DOOM-0042: %d duplicate doom_name row(s) - last wins.\n", dups);
     FlagLiquidFlats(table.data(), N);   // DOOM-0183 L1: name-derived liquid bit (nukage/lava)
+    FlagGlowWholeWalls(table.data(), N);
 
     // last-wins row per id (matches rb_build_ctrl_table's overwrite policy).
     // A row naming nothing in this WAD is the likeliest mistake in a hand-edited CSV and

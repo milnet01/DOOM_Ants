@@ -459,6 +459,9 @@ int RB_WallTexEmits(int texnum);
 float RB_WallTexCastScale(int texnum);
 // DOOM-0646: 1 when a listed wall is a dim light, read at the lower bright test.
 int RB_WallTexDimLight(int texnum);
+// DOOM-0659: 1 when a listed wall shows its glow over its whole face (r_mesh.c
+// wall_glow_whole), not only on its brightest texels.
+int RB_WallTexGlowsWhole(int texnum);
 
 // WAD-global PLAYPAL (palette 0): 256 straight-RGB triples, pointing at the
 // cached lump. The back-end builds its colour LUT from this at init so the 2D
