@@ -2981,6 +2981,7 @@ static VkPipeline RtPipelineForMode(uint32_t mode)
 
 static void CreateHdSetLayout();   // DOOM-0042: the HD set's layout, in the raster and RT pipeline layouts
 static void InitHdDefault();       // DOOM-0042: seed an all-paletted set 3 at atlas time
+static void FlagGlowMaterials(rb_matctrl_t* table, int N);   // DOOM-0659/0660
 // DOOM-0170 perf: monotonic wall clock in milliseconds for the CPU-side frame
 // profiler. steady_clock is immune to NTP/settimeofday jumps, unlike wall-time.
 // Defined up here rather than beside the profiler because DOOM-0011 L1d's seep fill,
@@ -6084,6 +6085,12 @@ static const float kLavaLe[3]   = { 0.55f, 0.19f, 0.03f };   // hot orange lava 
 // forced emission (ForceLiquidEmissive) both read that one list.
 using surf::kLiquidFlats;
 
+// DOOM-0660: the red teleporter flats. Their lines are drawn in dark red, so the derive
+// finds no light in them; they get a faint forced Le, and RB_FLAG_GLOW_LINES shows it on
+// the lines only. GATE4 is grey and stays out.
+static const char* const kGlowLineFlats[] = { "GATE1", "GATE2", "GATE3" };
+static const float kGlowLineLe[3] = { 0.12f, 0.01f, 0.01f };
+
 // A flat's unified material id -- numWall + (lump - firstflat), the textured-decode id
 // ordering -- or -1 when this WAD lacks the flat.
 static int LiquidFlatId(const char* name, int numWall, int numFlat)
@@ -6169,6 +6176,11 @@ static void ComputeMaterialEmissive(const rb_atlas_t* a, std::vector<float>& out
     }
 
     ForceLiquidEmissive(a, out);   // DOOM-0183 L2: forced glow Le on nukage/lava (delivers DOOM-0083)
+    for (const char* name : kGlowLineFlats) {   // DOOM-0660: the teleporters' faint glow
+        const int id = LiquidFlatId(name, a->numwall, a->numflat);
+        if (id >= 0 && (size_t)(id * 3 + 2) < out.size())
+            for (int c = 0; c < 3; c++) out[(size_t)id * 3 + c] = kGlowLineLe[c];
+    }
 }
 
 // A batch of independent sampled 2D images, uploaded in one go. Every image is
@@ -7316,9 +7328,8 @@ static void InitHdDefault()
         table[i].flags    = 0u;
         table[i].usePBR   = 0u;
     }
-    for (int t = 0; t < g.matNumWall && t < N; t++)   // DOOM-0659, as FlagGlowWholeWalls
-        if (RB_WallTexGlowsWhole(t)) table[t].flags |= RB_FLAG_GLOW_WHOLE;
-    g.hdGrungeIdx = -1;                // DOOM-0179: no grime on the default all-paletted set
+    FlagGlowMaterials(table.data(), N);   // DOOM-0659/0660: Solid shows the same glows
+    g.hdGrungeIdx = -1;               // DOOM-0179: no grime on the default all-paletted set
     g.hdDirtIdx = -1;                   // DOOM-0181: no dirt-colour texture on the paletted set
     BuildHdSet({}, table.data(), N);   // empty srcs -> 1x1 dummy image; all paletted
 }
@@ -7336,13 +7347,18 @@ static void FlagLiquidFlats(rb_matctrl_t* table, int N)
     }
 }
 
-// DOOM-0659: flag the walls whose whole face glows. Both control tables take it (Solid's
+// DOOM-0659/0660: flag the materials whose glow shows by a rule of its own: walls whose
+// whole face glows, and flats whose lines glow. Both control tables take it (Solid's
 // all-paletted default and Ultra's), so the two tiers show the same glow. A wall's
 // unified id is its texnum.
-static void FlagGlowWholeWalls(rb_matctrl_t* table, int N)
+static void FlagGlowMaterials(rb_matctrl_t* table, int N)
 {
     for (int t = 0; t < g.matNumWall && t < N; t++)
         if (RB_WallTexGlowsWhole(t)) table[t].flags |= RB_FLAG_GLOW_WHOLE;
+    for (const char* name : kGlowLineFlats) {   // DOOM-0660
+        const int id = LiquidFlatId(name, g.matNumWall, g.matNumFlat);
+        if (id >= 0 && id < N) table[id].flags |= RB_FLAG_GLOW_LINES;
+    }
 }
 
 // Where the HD assets are (DOOM-0410). The default used to be the launch directory, so
@@ -7440,7 +7456,7 @@ static bool LoadHdMaterials(bool usePack)
     rb_build_ctrl_table(rows.data(), (int)rows.size(), N, &ResolveDoomName, table.data(), &dups);
     if (dups) printf("DOOM-0042: %d duplicate doom_name row(s) - last wins.\n", dups);
     FlagLiquidFlats(table.data(), N);   // DOOM-0183 L1: name-derived liquid bit (nukage/lava)
-    FlagGlowWholeWalls(table.data(), N);
+    FlagGlowMaterials(table.data(), N);
 
     // last-wins row per id (matches rb_build_ctrl_table's overwrite policy).
     // A row naming nothing in this WAD is the likeliest mistake in a hand-edited CSV and

@@ -24,6 +24,9 @@ enum { RB_ALB = 0, RB_NRM, RB_RGH, RB_MET, RB_AO, RB_EMIS, RB_HGT };
 /* DOOM-0659: a wall light whose whole face glows (r_mesh.c wall_glow_whole). Set by name
  * on the CPU; mirrors pathtrace.comp GLOW_WHOLE. */
 #define RB_FLAG_GLOW_WHOLE 128u
+/* DOOM-0660: a flat whose dark-red drawn lines glow and whose field does not (the
+ * teleporter pentagrams, r_vulkan.cpp kGlowLineFlats). Mirrors pathtrace.comp GLOW_LINES. */
+#define RB_FLAG_GLOW_LINES 256u
 #define RB_FLAG_BAD    0x80000000u   /* unknown flags token — caller treats row malformed */
 
 typedef struct {

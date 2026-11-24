@@ -634,9 +634,19 @@ bool  isLiquid(MatCtrl mc) { return (mc.flags & (LIQUID_NUKAGE | LIQUID_LAVA)) !
 // DOOM-0659: a GLOW_WHOLE wall weighs 1 everywhere, so shownEmission shows each texel's
 // own albedo at the cap: the whole face glows in the texture's colours.
 const uint GLOW_WHOLE = 128u;      // rb_materials.h RB_FLAG_GLOW_WHOLE
+// DOOM-0660: a GLOW_LINES flat (the red teleporter pentagrams) glows on its drawn lines
+// only. The lines are palette reds 67-79 (encoded value up to 0.31), the field 91 and up
+// (0.357); the red test keeps the black specks and the brown rim dark.
+const uint GLOW_LINES = 256u;      // rb_materials.h RB_FLAG_GLOW_LINES
+float glowLinesMask(vec3 albedo) {
+    bool red = albedo.r > 0.0 && albedo.r > 4.0 * max(albedo.g, albedo.b);
+    return red ? 1.0 - smoothstep(0.31, 0.35, linearToSrgb(albedo.r)) : 0.0;
+}
 float emisWeight(MatCtrl mc, vec3 albedo) {
     if (isLiquid(mc)) return -1.0;
-    return (mc.flags & GLOW_WHOLE) != 0u ? 1.0 : emissiveMask(albedo);
+    if ((mc.flags & GLOW_WHOLE) != 0u) return 1.0;
+    if ((mc.flags & GLOW_LINES) != 0u) return glowLinesMask(albedo);
+    return emissiveMask(albedo);
 }
 bool  wetOn()              { return (pc.misc6.y & 1u) != 0u; }
 bool  sourcedLightOnly()   { return (pc.misc6.y & 2u) != 0u; }   // DOOM-0642's test switch

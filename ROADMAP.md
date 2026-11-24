@@ -21484,6 +21484,16 @@ in CLAUDE.md describes.
   only. Find the flat name and add it to the emissive set with a mask on
   its lines; check both views (Solid gets it too, per CLAUDE.md's tier
   table).
+  Built 2026-11-24. The flats are GATE1-3 (red field, lines drawn in
+  palette reds 67-79; GATE4 is grey and stays out). They get a forced Le
+  (0.12, 0.01, 0.01), so they cast light like any floor light (key 2),
+  and a GLOW_LINES material flag, in Solid's and Ultra's tables, whose
+  traced mask shows that glow only on red texels darker than the field.
+  Traced, Ultra and Solid: lines glow, faint red spill on nearby walls.
+  Solid raster: almost no change (MAE 0.04 %): the raster view shows no
+  per-texel glow on any wall or floor, and this cast light is too faint
+  to see there. Close on the user's look. Pictures: Scratchpad
+  d0660/grid.png.
   **Layman:** The teleporter pad's star and circle should glow faintly.
   Kind: feature.
   Source: user-report-2026-11-23.
