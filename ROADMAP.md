@@ -21471,18 +21471,28 @@ in CLAUDE.md describes.
   so it is DOOM-0642's call and the user's look. Pictures: Scratchpad
   d0658/sky16grid.png (top: facing the opening, normal vs x16; bottom:
   facing 348).
+  User 2026-11-24: brighter sky light as in the x16 trial, but only at
+  that spot on E2M1, baked in there rather than changing the sky light.
+  Built: sky_spot.h holds E2M1's spot (the start room and its south
+  window, sectors 77-78, x16 sky fill), matched by map and by its sector
+  and line counts so Freedoom's or a mod's E2M1 does not take it;
+  bake.comp multiplies the sky fill for probes inside the box. Light lab
+  79: the walls beside the window take the blue sky light as in the
+  trial; the yard outside is unchanged. Close on the user's look.
   **Layman:** Light from the bright courtyard should spill into the room next to it, but the room stays black.
   Kind: investigate.
   Source: user-report-2026-11-23.
   Lanes: renderer.
 
-- 📋 [DOOM-0659] **E2M1's glowing red wall blocks are mostly black in the traced view.**
+- ✅ [DOOM-0659] **E2M1's glowing red wall blocks are mostly black in the traced view.**
   User 2026-11-23, shot 0289 (-warp 2 1 -skill 3 -warpto 237 452
   345 -lightlab 79), Ultra traced: the wall of red blocks around the
   inverted cross. Their glow and bloom are liked; the blocks show large
   black patches between bright spots. Find the texture and its emissive
   mask (DOOM-0302 emisWeight, galbedo.a) and why the dark texels stay
   black under a glow this strong.
+  Closed 2026-11-24 on the user's look: the red blocks and the red glow
+  in the room look right.
   **Layman:** The red glowing blocks give a great glow, but the blocks themselves are full of black patches that make no sense next to their glow.
   Kind: fix.
   Source: user-report-2026-11-23.
@@ -21505,6 +21515,13 @@ in CLAUDE.md describes.
   per-texel glow on any wall or floor, and this cast light is too faint
   to see there. Close on the user's look. Pictures: Scratchpad
   d0660/grid.png.
+  User 2026-11-24 loved the traced glow and asked for it in the
+  rasterised view. Built: mesh.frag finds the lines in the original art
+  (formulas/glow_lines.glsl, shared with the trace; Ultra's darker HD
+  pad would pass the test over its whole field) and shows them at the
+  colour the traced view shows them, about (182, 33, 33). Light lab:
+  bright lines in both tiers' raster views. Normal play: a lighter red
+  tracing on the lit pad. Close on the user's look at the raster view.
   **Layman:** The teleporter pad's star and circle should glow faintly.
   Kind: feature.
   Source: user-report-2026-11-23.
