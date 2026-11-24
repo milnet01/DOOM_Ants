@@ -1,6 +1,6 @@
 <!-- ants-roadmap-format: 1 -->
 <!-- Generated from the Ants Terminal roadmap store. Edit it with roadmap_log; hand edits are discarded by the next write. -->
-<!-- ants-roadmap-id-high-water: DOOM=660 -->
+<!-- ants-roadmap-id-high-water: DOOM=661 -->
 
 # Roadmap
 
@@ -21447,6 +21447,19 @@ in CLAUDE.md describes.
   2.2 %, about traced-frame noise. So the key press is not the cause;
   find what bounce actually changes in the traced view (sky light
   reaching the room through the opening), and why it barely shows.
+  Found 2026-11-24. Two causes. (1) The switch: the traced view's
+  indirect light is the probe bake alone, and key 6 only dropped the
+  emitters from it; passes 2-3 still bounced the sky fill. Fixed: in the
+  lab, bounce off bakes pass 1 alone with no emitters, so probes hold
+  only the sky each sees directly (bake line "1 bounces"). (2) The main
+  one: the bake's sky is a constant SKY_COLOR (0.20, 0.26, 0.40) while
+  the sky seen through the opening reads near white. At -9 86 348, Ultra
+  traced, mean of 255: lab 111 23.76, lab 79 23.55 after the fix (base
+  24.38 / 23.62). So bounce works but has almost nothing to carry.
+  Facing 270 shows the bright opening with dark walls beside it. Next:
+  try a bake sky fill that follows the visible sky, under the lab /
+  sourcedLightOnly first, and show the user. Pictures: Scratchpad
+  d0658/grid.png, looks.png.
   **Layman:** Light from the bright courtyard should spill into the room next to it, but the room stays black.
   Kind: investigate.
   Source: user-report-2026-11-23.
@@ -21474,6 +21487,20 @@ in CLAUDE.md describes.
   **Layman:** The teleporter pad's star and circle should glow faintly.
   Kind: feature.
   Source: user-report-2026-11-23.
+  Lanes: renderer.
+
+- 📋 [DOOM-0661] **Solid's traced view never flags the liquid flats, so nukage and lava lose their ripple, sheen and even glow.**
+  Found 2026-11-24 while building DOOM-0659, by reading r_vulkan.cpp:
+  FlagLiquidFlats runs only in LoadHdMaterials (Ultra). InitHdDefault,
+  the all-paletted control table Solid's traced view reads, sets every
+  flags word to 0. pathtrace.comp's isNukage/isLiquid read MatCtrl.flags,
+  so in Solid traced a liquid takes the bright-texel mask (patchy glow,
+  DOOM-0302) and no ripple or sheen (DOOM-0183). Unverified on screen.
+  Fix: call FlagLiquidFlats in InitHdDefault, then capture a nukage pool
+  in Solid traced before and after.
+  **Layman:** In the Solid look with ray tracing on, green slime and lava may be missing their ripples and shine, because the game forgets to mark them as liquid.
+  Kind: fix.
+  Source: found-2026-11-24.
   Lanes: renderer.
 
 ## 0.13.0 — The player's experience

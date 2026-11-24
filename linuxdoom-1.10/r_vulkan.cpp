@@ -9482,12 +9482,17 @@ void RunGiBake()
     // bounce lands in probeBuf (the buffer the megakernel reads): for an odd bounce
     // count that means starting the write on probeBuf. Per-frame cost does not depend on
     // the bounce count (one 8-corner blend); only this one-time bake does the extra passes.
-    const int      BOUNCES = 3;
-    static_assert(BOUNCES == 3, "the bake-done line prints three pass times");
+    // DOOM-0658: the light lab's bounce switch off keeps pass 1 alone, with no emitters, so
+    // the probes hold only the sky each one sees directly. Zeroing the emitters alone (as
+    // outside the lab under -skyonly) still bounces the sky off every surface it lights.
+    const int      MAX_BOUNCES = 3;
+    static_assert(MAX_BOUNCES == 3, "the bake-done line prints three pass times");
+    const bool     noBounce = LightLab() && !LightKindOn(LAB_BOUNCE);
+    const int      BOUNCES  = noBounce ? 1 : MAX_BOUNCES;
     VkBuffer       wbuf = (BOUNCES & 1) ? g.probeBuf : g.probeBuf2;
     VkBuffer       rbuf = (BOUNCES & 1) ? g.probeBuf2 : g.probeBuf;
     VkDescriptorSet sets[2] = { g.bakeDs, g.ds };
-    double passMs[BOUNCES] = {};
+    double passMs[MAX_BOUNCES] = {};
     // DOOM-0652 B4: the probes live in the card's memory, and a CPU read from there runs
     // at bus speed uncached (2.4 s for MAP24's check). The last pass copies them into
     // cached system memory, and the check below reads that copy.
@@ -9592,10 +9597,10 @@ void RunGiBake()
     vkDestroyBuffer(g.device, readBuf, nullptr);
     vkFreeMemory(g.device, readMem, nullptr);
     const double nValid = std::max((int)g.probeCount - invalid, 1);
-    printf("RB_Vulkan: GI bake done (3 bounces, %.1f ms; passes %.0f/%.0f/%.0f ms) — %u probes, "
+    printf("RB_Vulkan: GI bake done (%d bounces, %.1f ms; passes %.0f/%.0f/%.0f ms) — %u probes, "
            "%d inside solid map, %d non-finite SH coeffs, %d non-zero; mean DC irradiance "
            "rgb(%.3f, %.3f, %.3f)\n",
-           CpuNowMs() - bakeT0, passMs[0], passMs[1], passMs[2], g.probeCount, invalid,
+           BOUNCES, CpuNowMs() - bakeT0, passMs[0], passMs[1], passMs[2], g.probeCount, invalid,
            nonFinite, nonZero,
            dcSum[0] / nValid, dcSum[1] / nValid, dcSum[2] / nValid);
     // The probe's own position rides in floats 0..2 of its record, and printing it is what
