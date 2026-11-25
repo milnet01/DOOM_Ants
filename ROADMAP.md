@@ -1,6 +1,6 @@
 <!-- ants-roadmap-format: 1 -->
 <!-- Generated from the Ants Terminal roadmap store. Edit it with roadmap_log; hand edits are discarded by the next write. -->
-<!-- ants-roadmap-id-high-water: DOOM=661 -->
+<!-- ants-roadmap-id-high-water: DOOM=662 -->
 
 # Roadmap
 
@@ -14265,6 +14265,20 @@ defect visible before a player finds it.
   **Layman:** Two copies of the lighting maths (one for tests, one on the graphics card) could drift apart unnoticed.
   Kind: test.
   Source: vestige-code-review-2026-11-22.
+
+- 📋 [DOOM-0662] **The frame ledger closes its file before writing the finished header.**
+  Found while reviewing ExperiRays ed4f848, whose 5ae490a fixed the
+  same order. run_ledger.c RL_Finish runs fled_close and RL_Flush, then
+  RL_BuildHeader and the in-place rewrite of line 1. A crash or failed
+  write between them leaves a closed run whose header still holds the
+  opening values. Change: build and rewrite the header before fled_close
+  and the last flush. Also, RL_BuildHeader pads inside the object
+  ("%-12s" in its slot). That is valid JSON, but FLED-0001 section 4.1
+  puts the padding after the closing brace. Check: run_ledger_test.
+  **Layman:** If the game dies at the wrong moment while saving a frame-time recording, the file looks complete but holds the wrong start-of-run numbers.
+  Kind: fix.
+  Source: peer-review-experirays-2026-11-25.
+  Lanes: engine.
 
 ## 0.11.0 — The frame budget
 
