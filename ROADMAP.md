@@ -1,6 +1,6 @@
 <!-- ants-roadmap-format: 1 -->
 <!-- Generated from the Ants Terminal roadmap store. Edit it with roadmap_log; hand edits are discarded by the next write. -->
-<!-- ants-roadmap-id-high-water: DOOM=662 -->
+<!-- ants-roadmap-id-high-water: DOOM=663 -->
 
 # Roadmap
 
@@ -14279,6 +14279,23 @@ defect visible before a player finds it.
   Kind: fix.
   Source: peer-review-experirays-2026-11-25.
   Lanes: engine.
+
+- 📋 [DOOM-0663] **The path tracer's random numbers can reach 1.0, and its shadow offset vanishes on large maps.**
+  Found reviewing ExperiRays d680e37, whose direct.glsl does both right.
+  - shaders/pt_common.glsl rnd(): float(s) * (1/2^32) rounds up to
+    exactly 1.0 for s near 2^32. Use the top 24 bits:
+    float(s >> 8) * (1.0 / 16777216.0). hd_surface.glsl has the same form.
+  - pt_common.glsl's shadow ray uses a fixed hitP + n*1e-3. Past about
+    8192 units one float step is ~1e-3, so the lift can round away and
+    the surface shadows itself. Scale it: 1e-4 * max(32, max |p|), as
+    ExperiRays does in metres.
+  - pathtrace.comp's seed px.x + px.y*w + 1 + frame*2654435761 reuses
+    pixel seeds across some frame pairs. Hash the frame separately.
+  Check: an Ultra RT capture of a large map's far corner, before and after.
+  **Layman:** Two small maths slips in the ray tracer could cause speckles or wrong shadows at the far edges of big levels.
+  Kind: fix.
+  Source: peer-review-experirays-2026-11-25.
+  Lanes: renderer.
 
 ## 0.11.0 — The frame budget
 
