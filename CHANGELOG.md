@@ -8,6 +8,10 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Added
 
+- **Teleporter pentagrams glow** (DOOM-0660)
+  The star and circle on a teleporter pad glow red in Solid and Ultra,
+  in the rasterised and the ray-traced view alike.
+
 - **The coloured strips beside a key door are lights** (DOOM-0646)
   The blue, yellow and red strips, and their skull-key forms, now
   tint the wall and floor near them in their own colour, in Solid

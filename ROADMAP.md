@@ -21210,7 +21210,7 @@ in CLAUDE.md describes.
   Source: user-request-2026-11-21.
   Lanes: renderer.
 
-- 🚧 [DOOM-0651] **Traced fog glows with sky light deep inside rooms that cannot see the sky.**
+- ✅ [DOOM-0651] **Traced fog glows with sky light deep inside rooms that cannot see the sky.**
   User 2026-11-21, in the DOOM-0650 light lab: "the fog adds a little
   light even in pitch black rooms." Measured, Solid, traced view,
   E2M1 start `0 48 90`, every light off (-lightlab 0), view mean of 255:
@@ -21234,6 +21234,8 @@ in CLAUDE.md describes.
   51.5 -> 6.2. Room light on: unchanged within run noise (64.8-71.2).
   Test: sky_vis_test. Close on the user's look. Pictures: Scratchpad
   d0651/shots, d0651/open/cmp.png.
+  Closed 2026-11-25 on the user's word: the sealed-room fog look stands;
+  the outdoor-light question it raised was DOOM-0658.
   **Layman:** Fog in a pitch-black room still glows grey, because the game guesses the room is near the open sky when it is not.
   Kind: fix.
   Source: user-report-2026-11-21.
@@ -21420,7 +21422,7 @@ in CLAUDE.md describes.
   Source: found-2026-11-23-DOOM-0653.
   Lanes: renderer, tests.
 
-- 📋 [DOOM-0657] **Light lab: say what each key press switched on or off, by name.**
+- ✅ [DOOM-0657] **Light lab: say what each key press switched on or off, by name.**
   User 2026-11-23: "Sometimes it will say everything but torch. That
   doesn't tell me what that button actually turned on and off." The
   on-screen line today names the whole state ("All on except: ...").
@@ -21428,12 +21430,14 @@ in CLAUDE.md describes.
   state (e.g. "6 bounce light: off"), plus the full state. The F12 note
   should keep the state as now. Context: shots 0286-0289 read -lightlab
   79 (bounce off) where the user meant to turn bounce on.
+  Closed 2026-11-25 on the user's word: the light lab's line names what
+  each press switched.
   **Layman:** When you press a number key in the light lab, the screen should say exactly what that key turned on or off, not just what is still on.
   Kind: ux.
   Source: user-report-2026-11-23.
   Lanes: renderer.
 
-- 📋 [DOOM-0658] **E2M1: outdoor light does not bounce into the start room in the light lab.**
+- ✅ [DOOM-0658] **E2M1: outdoor light does not bounce into the start room in the light lab.**
   User 2026-11-23, shot 0286 (repeat line: -warp 2 1 -skill 3
   -warpto -117 12 345 -lightlab 79), Ultra traced. The F12 note says
   bounce (key 6) was OFF though the user meant it on, so first capture
@@ -21479,6 +21483,9 @@ in CLAUDE.md describes.
   bake.comp multiplies the sky fill for probes inside the box. Light lab
   79: the walls beside the window take the blue sky light as in the
   trial; the yard outside is unchanged. Close on the user's look.
+  Closed 2026-11-25 on the user's look at Scratchpad d0658b/sky.png: the
+  walls beside E2M1's start-room window catch the sky light; normal play
+  barely changes.
   **Layman:** Light from the bright courtyard should spill into the room next to it, but the room stays black.
   Kind: investigate.
   Source: user-report-2026-11-23.
@@ -21498,7 +21505,7 @@ in CLAUDE.md describes.
   Source: user-report-2026-11-23.
   Lanes: renderer.
 
-- 📋 [DOOM-0660] **Make the teleporter's pentagram and circle give off a little light.**
+- ✅ [DOOM-0660] **Make the teleporter's pentagram and circle give off a little light.**
   User 2026-11-23, shot 0288 (-warp 2 1 -skill 3 -warpto 29 510 130
   -lightlab 79), Ultra traced: the red pentagram-and-circle flat on the
   floor and ceiling. Want a small glow from the star and circle lines
@@ -21522,6 +21529,8 @@ in CLAUDE.md describes.
   colour the traced view shows them, about (182, 33, 33). Light lab:
   bright lines in both tiers' raster views. Normal play: a lighter red
   tracing on the lit pad. Close on the user's look at the raster view.
+  Closed 2026-11-25 on the user's look at Scratchpad d0658b/tpzoom2.png:
+  the pentagram lines glow in the rasterised view in both tiers.
   **Layman:** The teleporter pad's star and circle should glow faintly.
   Kind: feature.
   Source: user-report-2026-11-23.
