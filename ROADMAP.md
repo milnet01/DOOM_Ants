@@ -21567,7 +21567,7 @@ in CLAUDE.md describes.
   Source: user-report-2026-11-23.
   Lanes: renderer.
 
-- 📋 [DOOM-0661] **Solid's traced view never flags the liquid flats, so nukage and lava lose their ripple, sheen and even glow.**
+- 🚧 [DOOM-0661] **Solid's traced view never flags the liquid flats, so nukage and lava lose their ripple, sheen and even glow.**
   Found 2026-11-24 while building DOOM-0659, by reading r_vulkan.cpp:
   FlagLiquidFlats runs only in LoadHdMaterials (Ultra). InitHdDefault,
   the all-paletted control table Solid's traced view reads, sets every
@@ -21576,6 +21576,13 @@ in CLAUDE.md describes.
   DOOM-0302) and no ripple or sheen (DOOM-0183). Unverified on screen.
   Fix: call FlagLiquidFlats in InitHdDefault, then capture a nukage pool
   in Solid traced before and after.
+  2026-11-26: confirmed on screen, then fixed. E1M1 -warpto 1831 -3254
+  90, fog off: before, Solid traced drew the pool as plain texture;
+  after, it glows as Ultra's does (MAE 4.50 against a same-build control
+  of 0.008). Solid raster and Ultra stay within control noise. Fix:
+  InitHdDefault calls FlagLiquidFlats. DOOM-0183 INV-5 and DOOM-0103
+  section 4 amended to match. Awaits the user's look; close on it.
+  Captures: Scratchpad d0661/cmp.png (before, after, Ultra).
   **Layman:** In the Solid look with ray tracing on, green slime and lava may be missing their ripples and shine, because the game forgets to mark them as liquid.
   Kind: fix.
   Source: found-2026-11-24.

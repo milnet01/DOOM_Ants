@@ -2987,6 +2987,7 @@ static VkPipeline RtPipelineForMode(uint32_t mode)
 static void CreateHdSetLayout();   // DOOM-0042: the HD set's layout, in the raster and RT pipeline layouts
 static void InitHdDefault();       // DOOM-0042: seed an all-paletted set 3 at atlas time
 static void FlagGlowMaterials(rb_matctrl_t* table, int N);   // DOOM-0659/0660
+static void FlagLiquidFlats(rb_matctrl_t* table, int N);     // DOOM-0183 L1, DOOM-0661
 // DOOM-0170 perf: monotonic wall clock in milliseconds for the CPU-side frame
 // profiler. steady_clock is immune to NTP/settimeofday jumps, unlike wall-time.
 // Defined up here rather than beside the profiler because DOOM-0011 L1d's seep fill,
@@ -7334,6 +7335,7 @@ static void InitHdDefault()
         table[i].flags    = 0u;
         table[i].usePBR   = 0u;
     }
+    FlagLiquidFlats(table.data(), N);     // DOOM-0661: Solid traced gets the liquid effects too
     FlagGlowMaterials(table.data(), N);   // DOOM-0659/0660: Solid shows the same glows
     g.hdGrungeIdx = -1;               // DOOM-0179: no grime on the default all-paletted set
     g.hdDirtIdx = -1;                   // DOOM-0181: no dirt-colour texture on the paletted set

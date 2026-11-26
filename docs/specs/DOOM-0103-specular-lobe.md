@@ -313,10 +313,9 @@ pspec += pow(ndh, specN) * specNorm * ndl * col * att;   // only where ndl > 0
   scene.
 - **Bloom.** A floor highlight above the bloom threshold blooms. That is
   expected of direct light (DOOM-0331). No bloom constant changes.
-- **Liquids in Solid.** `FlagLiquidFlats` runs only for Ultra (DOOM-0183
-  INV-5), so in Solid a nukage flat is not flagged and gets the lobe instead
-  of the sheen. Accepted: it then gleams in both tiers, through different
-  terms.
+- **Liquids in Solid.** `FlagLiquidFlats` flags the liquid flats in both
+  tiers (DOOM-0661), so a traced nukage flat takes the sheen, not the lobe,
+  in Solid as in Ultra.
 
 ## 5. Data & resources
 

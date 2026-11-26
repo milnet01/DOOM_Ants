@@ -416,7 +416,7 @@ L4. Between L3 and L4 the glint is static — expected, mirroring DOOM-0181's
 - **INV-4:** Ripples perturb the normal on **flagged nukage only**. Lava, goo
   puddles, and every non-liquid surface keep an **unperturbed** normal (identical
   normal path).
-- **INV-5:** Ultra RT only; modes 4 and 6 get identical treatment. Classic stays
+- **INV-5:** The traced views of Solid and Ultra (DOOM-0661); modes 4 and 6 get identical treatment. Classic stays
   **byte-identical**. With `specular` 0 (DOOM-0103 INV-4), so do the raster stack
   (Solid, **and Ultra with RT off**) and non-liquid RT surfaces, **except** floors carrying a
   DOOM-0181 goo-stain (§4.6), which take sheen + a faint glow via the goo mask
