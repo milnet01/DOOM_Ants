@@ -21070,8 +21070,11 @@ in CLAUDE.md describes.
   bounce of a small light is small; strength is tuning, after B7.
   68 maps bake in Ultra with no error and no non-finite SH; most
   light-Thing triangles MAP25 110, MAP29 108, MAP15 104, E4M8 92.
-  Not done: bake time on a real display under the quiet hold (the
-  timed run was blocked by a permission prompt). Pictures:
+  Bake time, real display, quiet hold + gpu-timed lock, three
+  repeats (2026-11-27, the user ran d0642/b3/time.sh): Solid MAP25
+  14.3-15.1 -> 13.8-13.9 ms, MAP29 20.7-21.1 -> 20.6-20.9; Ultra MAP25
+  20.8-21.1 -> 21.5-22.2, MAP29 27.9-29.0 -> 28.5-29.9. One disturbed
+  repeat dropped (54 ms, its bounce passes slow too). Once per load. Pictures:
   Scratchpad d0642/b3/shots/*-sheet.png. Next: B4.
   **Layman:** A room with no lamp, glowing panel, window or sky should be quite dark instead of evenly lit from nowhere.
   Kind: investigate.
