@@ -1,7 +1,7 @@
 <!-- ants-spec-format: 1 -->
 # DOOM-0642 — Honest light: every lit thing is lit by a source the player can find
 
-**Status:** building; B1 is built (2026-11-21).
+**Status:** building; B1 and B2 built (2026-11-21), B3 built (2026-11-27).
 **Kind:** feature.
 **Source:** ROADMAP DOOM-0642 (user requests 2026-11-20).
 **Delivers:** DOOM-0209 (candles and candelabra cast light), as its first stage.
@@ -135,8 +135,9 @@ vertices.
 
 - **B1** — candles and candelabra emit. Check: E2M1's first corridor under `-sourcedlight`.
   Built.
-- **B2** — the screen sheet, the user's pick, the list.
-- **B3** — static light Things in the bake.
+- **B2** — the screen sheet, the user's pick, the list. Built.
+- **B3** — static light Things in the bake. Built: `RB_BuildBakeLights` in `r_mesh.c`;
+  `RunGiBake` feeds them as omni lights after the wall and floor set.
 - **B4** — the subsector on sprite vertices; the bounce on sprites in the traced view.
 - **B5** — point lights and bounce on sprites in the rasterised view; the budget check.
 - **B6** — the weapon; the rasterised muzzle flash.

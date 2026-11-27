@@ -3058,6 +3058,48 @@ int RB_BuildSprites(const rb_view_t* view, rb_vertex_t* out, int maxverts, int m
     return n;
 }
 
+int RB_BuildBakeLights(rb_vertex_t* out, int maxverts)
+{
+    const unsigned goes = MF_SHOOTABLE | MF_SPECIAL | MF_MISSILE | MF_COUNTKILL;
+    mobj_t*        thing;
+    int            s, k, n = 0;
+
+    if (numspritelumps <= 0)
+        return 0;
+    ensure_sprite_heights();
+    for (s = 0; s < numsectors; s++)
+    {
+        for (thing = sectors[s].thinglist; thing; thing = thing->snext)
+        {
+            const rb_model_t* m = thing_model(thing);
+            rb_vertex_t       q[6];
+            rb_view_t         view = { 0 };
+
+            // Spawned in play (a puff, a drop) or able to leave: its bounce would outlive it.
+            if (thing->spawnpoint.type == 0 || (thing->flags & goes))
+                continue;
+            if (m)
+            {
+                if (n + (int)(m->numLights * 3u) > maxverts)
+                    return n;
+                model_lights(thing, m, out + n);
+                n += (int)(m->numLights * 3u);
+                continue;
+            }
+            // Omni lights: the billboard's facing is irrelevant, so any view will do.
+            view.x = thing->x / (float)FRACUNIT - 1.0f;
+            view.y = thing->y / (float)FRACUNIT;
+            if (!sprite_quad(&view, thing, q) || !(q[0].flags & RB_MESH_EMISSIVE))
+                continue;
+            if (n + 6 > maxverts)
+                return n;
+            for (k = 0; k < 6; k++)
+                out[n++] = q[k];
+        }
+    }
+    return n;
+}
+
 // DOOM-0170 L2d — blob shadows. One horizontal quad on the floor beneath each solid
 // or pickup Thing (monsters, barrels, keys/items), so things read as grounded even in
 // a room with no dominant light (§4.5). The quad's four corners carry [-1,1] radial UV;

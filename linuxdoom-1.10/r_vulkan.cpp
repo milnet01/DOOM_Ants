@@ -3142,10 +3142,11 @@ void CreateBakePipeline()
     // Push constant: uvec4 (probeCount/numWall/emitterCount/giEnabled) + 8 uint64
     // buffer addresses (verts, emit, matEmis, probes, prevProbes, direct, + DOOM-0119
     // emitSec/reject — always 0 here, but the shared shadeSurface references them so
-    // the range must cover them) + DOOM-0658's two vec4s for the sky spot = 112 bytes.
+    // the range must cover them) + DOOM-0658's two vec4s for the sky spot + DOOM-0642's
+    // uvec4 (omniStart) = 128 bytes, the most every device must allow.
     // MUST match sizeof(BakePush) below.
     VkDescriptorSetLayout setLayouts[2] = { g.bakeDsLayout, g.dsLayout };
-    CreateComputeLayout(setLayouts, 2, 112, "bake", &g.bakePipeLayout);
+    CreateComputeLayout(setLayouts, 2, 128, "bake", &g.bakePipeLayout);
     CreateComputePipe(bake_comp_spv, bake_comp_spv_len, g.bakePipeLayout, "bake", &g.bakePipeline);
 }
 
@@ -8112,19 +8113,13 @@ static const float    RASTER_LAMP_POOL_REACH          = 160.0f;
 // burning barrels qualify automatically, no hand-kept name list). Append each
 // emissive sprite's two quad triangles as NEE area emitters so it pools light +
 // casts world-occluded shadows onto its surroundings, then re-finalise the list.
-void BuildDynamicEmitters()
+// DOOM-0084: one sprite or model-light triangle as an omni emitter record (14 floats) and
+// its power weight. False when it is no light: not flagged emissive, a billboard whose model
+// casts instead, or a picture with no Le. The frame's sprite lights and the bake's light
+// Things (DOOM-0642 B3) both come through here, so the bounce matches the direct light.
+static bool AppendSpriteEmitter(const rb_vertex_t* tri, std::vector<float>& emit,
+                                std::vector<float>& wgt)
 {
-    if (!g.emitMapped || g.matEmissive.empty() || !g.sprWorldMapped || !LightKindOn(LAB_LAMPS))
-    {
-        FinalizeEmitters(nullptr, nullptr);      // keep the static set live
-        g.frameDynReach.clear();
-        return;
-    }
-    const int      matCount = (int)(g.matEmissive.size() / 3);
-    const uint32_t base     = (uint32_t)(g.matNumWall + g.matNumFlat);
-    const rb_vertex_t* v    = g.sprWorldCpu.data();
-    const uint32_t tris     = g.sprWorldVertCount / 3u;
-
     // DOOM-0084: cast-intensity boost for sprite lights. A lamp billboard is a small
     // quad, so as an NEE area light its radiant power (Le * area) is tiny next to the
     // big wall/flat emitters — it's selected rarely and contributes little, so lamps
@@ -8136,6 +8131,51 @@ void BuildDynamicEmitters()
     // area and a model light is one tiny triangle. The raster view reads its colour alone.
     const float kModelLightTraceGain = 200.0f;
 
+    if (!(tri->flags & RB_MESH_EMISSIVE))
+        return false;                            // not a light object (pickup/monster/decoration)
+    if (tri->flags & RB_MESH_HASMODEL)
+        return false;                            // DOOM-0539: its model's light triangles cast instead
+    const int   matCount   = (int)(g.matEmissive.size() / 3);
+    const bool  modelLight = (tri->flags & RB_MESH_MODEL) != 0;
+    const float modelLe[3] = { tri->nx, tri->ny, tri->nz };
+    const int   id         = g.matNumWall + g.matNumFlat + tri->texnum;
+    if (!modelLight && (id < 0 || id >= matCount))
+        return false;
+    const float* le   = modelLight ? modelLe : &g.matEmissive[(size_t)id * 3];
+    const float  gain = modelLight ? kModelLightTraceGain : kSpriteEmitBoost;
+    if (le[0] + le[1] + le[2] <= 0.0f)
+        return false;                            // emissive Thing whose sprite texture isn't a light
+    const float lr = le[0] * gain, lg = le[1] * gain, lb = le[2] * gain;
+    const float ex1 = tri[1].x - tri[0].x, ey1 = tri[1].y - tri[0].y, ez1 = tri[1].z - tri[0].z;
+    const float ex2 = tri[2].x - tri[0].x, ey2 = tri[2].y - tri[0].y, ez2 = tri[2].z - tri[0].z;
+    const float cxv = ey1 * ez2 - ez1 * ey2;
+    const float cyv = ez1 * ex2 - ex1 * ez2;
+    const float czv = ex1 * ey2 - ey1 * ex2;
+    const float area = 0.5f * std::sqrt(cxv * cxv + cyv * cyv + czv * czv);
+    const float w    = emis::luminance(lr, lg, lb) * area;
+    if (!(w > 0.0f) || !std::isfinite(w))
+        return false;                            // DOOM-0407: pdf 0 -> Inf in the shader; DOOM-0547: Inf weight
+    for (int k = 0; k < 3; k++)
+    {
+        emit.push_back(tri[k].x); emit.push_back(tri[k].y); emit.push_back(tri[k].z);
+    }
+    emit.push_back(lr); emit.push_back(lg); emit.push_back(lb);
+    emit.push_back(0.0f); emit.push_back(0.0f);   // cdf, pdf — filled in finalise
+    wgt.push_back(w);
+    return true;
+}
+
+void BuildDynamicEmitters()
+{
+    if (!g.emitMapped || g.matEmissive.empty() || !g.sprWorldMapped || !LightKindOn(LAB_LAMPS))
+    {
+        FinalizeEmitters(nullptr, nullptr);      // keep the static set live
+        g.frameDynReach.clear();
+        return;
+    }
+    const rb_vertex_t* v    = g.sprWorldCpu.data();
+    const uint32_t tris     = g.sprWorldVertCount / 3u;
+
     std::vector<float> emit, wgt;
     std::vector<uint32_t> dynSec;            // DOOM-0119: per-emitter sector (REJECT cull)
     std::vector<float>    dynReach;          // DOOM-0482: per-emitter raster reach
@@ -8144,36 +8184,10 @@ void BuildDynamicEmitters()
     for (uint32_t t = 0; t < tris; t++)
     {
         const rb_vertex_t* tri = &v[t * 3];
-        if (!(tri->flags & RB_MESH_EMISSIVE))
-            continue;                            // not a light object (pickup/monster/decoration)
-        if (tri->flags & RB_MESH_HASMODEL)
-            continue;                            // DOOM-0539: its model's light triangles cast instead
-        const bool  modelLight = (tri->flags & RB_MESH_MODEL) != 0;
-        const float modelLe[3] = { tri->nx, tri->ny, tri->nz };
-        const int   id         = (int)base + tri->texnum;
-        if (!modelLight && (id < 0 || id >= matCount))
+        if (!AppendSpriteEmitter(tri, emit, wgt))
             continue;
-        const float* le   = modelLight ? modelLe : &g.matEmissive[(size_t)id * 3];
-        const float  gain = modelLight ? kModelLightTraceGain : kSpriteEmitBoost;
-        if (le[0] + le[1] + le[2] <= 0.0f)
-            continue;                            // emissive Thing whose sprite texture isn't a light
-        const float lr = le[0] * gain, lg = le[1] * gain, lb = le[2] * gain;
-        const float ex1 = tri[1].x - tri[0].x, ey1 = tri[1].y - tri[0].y, ez1 = tri[1].z - tri[0].z;
-        const float ex2 = tri[2].x - tri[0].x, ey2 = tri[2].y - tri[0].y, ez2 = tri[2].z - tri[0].z;
-        const float cxv = ey1 * ez2 - ez1 * ey2;
-        const float cyv = ez1 * ex2 - ex1 * ez2;
-        const float czv = ex1 * ey2 - ey1 * ex2;
-        const float area = 0.5f * std::sqrt(cxv * cxv + cyv * cyv + czv * czv);
-        const float w    = emis::luminance(lr, lg, lb) * area;
-        if (!(w > 0.0f) || !std::isfinite(w))
-            continue;                            // DOOM-0407: pdf 0 -> Inf in the shader; DOOM-0547: Inf weight
-        for (int k = 0; k < 3; k++)
-        {
-            emit.push_back(tri[k].x); emit.push_back(tri[k].y); emit.push_back(tri[k].z);
-        }
-        emit.push_back(lr); emit.push_back(lg); emit.push_back(lb);
-        emit.push_back(0.0f); emit.push_back(0.0f);   // cdf, pdf — filled in finalise
-        wgt.push_back(w);
+        const float lr = emit[emit.size() - 5], lg = emit[emit.size() - 4], lb = emit[emit.size() - 3];
+        const bool  modelLight = (tri->flags & RB_MESH_MODEL) != 0;
 
         // DOOM-0119: tag this sprite emitter with its room for the REJECT cull. The
         // quad is a billboard centred on the Thing, so the triangle centroid's sector
@@ -9495,11 +9509,29 @@ void RunGiBake()
         uint64_t rejectAddr;    // present only to match the shared shadeSurface signature.
         float    spotLo[4];     // DOOM-0658: the sky spot's box, xyz; w = its gain (1 = none)
         float    spotHi[4];
+        uint32_t misc2[4];      // DOOM-0642 B3: x = omniStart, where the light Things begin
     } bp = {};
-    static_assert(sizeof(BakePush) == 112, "bake push-constant layout must match the shader");
+    static_assert(sizeof(BakePush) == 128, "bake push-constant layout must match the shader");
+
+    // DOOM-0642 B3: the light Things that never move or go join the bake as omni lights
+    // after the static set, as a frame's sprite lights do. Restored to the static set below.
+    std::vector<float> thingEmit, thingWgt;
+    if (LightKindOn(LAB_LAMPS))
+    {
+        std::vector<rb_vertex_t> tv((size_t)SPR_EMIT_MAX * 3u);
+        const int nv = RB_BuildBakeLights(tv.data(), (int)tv.size());
+        for (int t = 0; t + 2 < nv; t += 3)
+            AppendSpriteEmitter(&tv[(size_t)t], thingEmit, thingWgt);
+    }
+    FinalizeEmitters(&thingEmit, &thingWgt);
+    const uint32_t omniStart = std::min((uint32_t)g.staticWgt.size(), g.emitCount);
+    printf("RB_Vulkan: GI bake lights — %u wall and floor, %u from light Things.\n",
+           omniStart, g.emitCount - omniStart);
+
     bp.misc[0]     = g.probeCount;
     bp.misc[1]     = (uint32_t)g.matNumWall;
     bp.misc[2]     = LightKindOn(LAB_BOUNCE) ? g.emitCount : 0u;   // 0: sky fill alone
+    bp.misc2[0]    = LightKindOn(LAB_BOUNCE) ? omniStart : 0u;
     bp.vertsAddr   = BufferAddress(g.vbuf);
     bp.emitAddr    = g.emitBuf ? BufferAddress(g.emitBuf) : 0;
     bp.matEmisAddr = BufferAddress(g.matEmisBuf);
@@ -9580,6 +9612,7 @@ void RunGiBake()
     }
     vkDestroyBuffer(g.device, directBuf, nullptr);
     vkFreeMemory(g.device, directMem, nullptr);
+    FinalizeEmitters(nullptr, nullptr);   // the static set again, as the callers left it
     // After an odd bounce count the final pass wrote g.probeBuf — readback below.
 
     // Verify: scan the final SH payload (floats 4..15 of each record) for
@@ -11804,13 +11837,13 @@ static void RecordGamma(uint32_t idx)
     vkCmdEndRenderPass(g.cmd);
 }
 
-// DOOM-0650: the light lab's wall, flat and bounce switches change what the level-load
+// DOOM-0650: the light lab's wall, flat, lamp and bounce switches change what the level-load
 // bake saw, so a press rebuilds the static emitters and bakes again. The fog-light grid
 // (DOOM-0011 L3) keeps its level-load lights. The wait makes the press a short hitch,
 // which the lab accepts: the previous frame may still be reading the emitter buffer.
 static void ApplyLightLab()
 {
-    const int bakedBits = LAB_WALLS | LAB_FLATS | LAB_BOUNCE;
+    const int bakedBits = LAB_WALLS | LAB_FLATS | LAB_LAMPS | LAB_BOUNCE;   // LAMPS: DOOM-0642 B3
     if (!LightLab() || !g.levelMesh || !g.emitMapped)
         return;
     const int want = rb_lightlab & bakedBits;

@@ -18981,11 +18981,14 @@ in CLAUDE.md describes.
   Source: in-session-2026-09-30 (found answering UT_Ants).
   Lanes: renderer.
 
-- 📋 [DOOM-0475] **Sprite lamps cast direct light but contribute nothing to the baked bounce.**
+- 🚧 [DOOM-0475] **Sprite lamps cast direct light but contribute nothing to the baked bounce.**
   `bake.comp` passes `omniStart == emitCount`, so the omnidirectional sprite-light
   loop in `shadeSurface` is empty during the bake, and the bake runs at level load
   before sprite emitters exist. Static lamp Things do not move; they could be in
   the bake. Measure first how much bounce a lamp-only room is missing.
+  2026-11-27: built as DOOM-0642 B3 (see there). Measured: a
+  lamp-only room gains a small warm bounce; candles barely register.
+  Closes with DOOM-0642 B3 on the user's look.
   **Layman:** A room lit only by a lamp or torch gets the lamp's direct light but none of the soft light that should bounce off the walls.
   Kind: investigate.
   Source: in-session-2026-09-30 (found answering UT_Ants).
@@ -21052,6 +21055,24 @@ in CLAUDE.md describes.
   40494a4 adds the switch, -skyonly. Indoors falls to 0.5-3.6 of 255;
   E1M1's open-sky spots keep 25-29 rasterised, 56-57 traced
   (Scratchpad d0642/sky). Next: per-light-kind switches on top of it.
+  B3, 2026-11-27: light Things that never move or go (candles, lamps,
+  torches, the burning barrel; not pickups, monsters, anything
+  shootable or spawned in play) join the GI bake as omni lights after
+  the wall and floor set (RB_BuildBakeLights in r_mesh.c; RunGiBake;
+  bake.comp push constant 112 -> 128 bytes, misc2.x = omniStart). The
+  light lab's lamp switch now rebakes. Delivers DOOM-0475.
+  Measured, -lightlab 44 (lamps, glow, bounce), fog off, base
+  5f8356b against B3: E1M1 start traced moves 3.0-3.4 % of pixels
+  (same-binary controls 0.1-0.8 %), warm light added, Solid traced
+  mean 25.52 -> 25.92 red, Ultra 21.44 -> 21.88; Solid raster and
+  E2M1's candle corridor change by under 0.1 of 255. Normal play
+  moves under 0.5 % at every spot and is no darker (INV-6). The
+  bounce of a small light is small; strength is tuning, after B7.
+  68 maps bake in Ultra with no error and no non-finite SH; most
+  light-Thing triangles MAP25 110, MAP29 108, MAP15 104, E4M8 92.
+  Not done: bake time on a real display under the quiet hold (the
+  timed run was blocked by a permission prompt). Pictures:
+  Scratchpad d0642/b3/shots/*-sheet.png. Next: B4.
   **Layman:** A room with no lamp, glowing panel, window or sky should be quite dark instead of evenly lit from nowhere.
   Kind: investigate.
   Source: user-request-2026-11-20.

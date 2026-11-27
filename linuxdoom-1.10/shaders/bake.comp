@@ -49,11 +49,12 @@ layout(push_constant) uniform PC {
     Probes   direct;    // DOOM-0652 B4: 12 SH floats per probe, everything pass 1 gathers
                         // except bounce light (direct light and sky fill); passes 2+
                         // add it back instead of re-tracing it
-    EmitSec  emitSec;  // DOOM-0119: unused here (always 0) — the bake's omni loop is
-    Reject   reject;   // empty (omniStart == emitCount), so shadeSurface's REJECT cull
-                       // is dead; passed only to satisfy the shared signature.
+    EmitSec  emitSec;  // DOOM-0119: unused here (always 0): the bake passes no sectors,
+    Reject   reject;   // so shadeSurface's REJECT cull is dead; passed only to satisfy
+                       // the shared signature.
     vec4     spotLo;   // DOOM-0658: sky_spot.h's box for this map, xyz; w = the gain
     vec4     spotHi;   // inside it (1 everywhere when the map has no spot)
+    uvec4    misc2;    // DOOM-0642 B3: x = omniStart; [x, misc.z) are the light Things
 } pc;
 
 const uint  BAKE_RAYS = 128u;   // sphere samples/probe. SH-L1 is very low frequency,
@@ -174,10 +175,10 @@ void main()
             // (addEmission=false — directly-visible emitters are the frame's NEE
             // job; folding them in here too would double-count). This pass's probes
             // therefore hold INDIRECT radiance.
-            // omniStart = emitCount: the level-load bake has only static wall/flat
-            // emitters (no sprite lights yet), so every emitter stays oriented.
+            // Wall and floor emitters [0, omniStart) stay oriented; the light Things that
+            // never move or go (DOOM-0642 B3) follow as omni lights, as in a frame.
             // DOOM-0119: hitSec 0xFFFFFFFF + numSectors 0 -> REJECT cull off (the bake
-            // never culls; its omni loop is empty anyway).
+            // never culls).
             // DOOM-0103 INV-2: a zero view direction and setting 0, so the probes hold
             // no highlight; noSpec stays zero.
             // Multi-bounce: passes 2+ (giEnabled) take the light this surface received
@@ -187,7 +188,7 @@ void main()
             if (bounce)
                 Li = albedo * giIrradianceAt(pc.prevProbes, hitP, n);
             else
-                Li = shadeSurface(hitP, n, albedo, id, pc.misc.z, pc.misc.z,
+                Li = shadeSurface(hitP, n, albedo, id, pc.misc2.x, pc.misc.z,
                                   pc.emit, pc.matEmis, BAKE_NEE, false,
                                   1.0,   // unused: addEmission is false for the bake
                                   0xFFFFFFFFu, 0u, pc.emitSec, pc.reject,

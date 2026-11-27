@@ -500,6 +500,14 @@ typedef struct
 // passes 1; 0 keeps every thing a billboard.
 int RB_BuildSprites(const rb_view_t* view, rb_vertex_t* out, int maxverts, int models);
 
+// DOOM-0642 B3: the light triangles of every light Thing the map placed that can never move
+// or go: candles, lamps, torches, the burning barrel. Not a pickup, a monster, anything
+// shootable or anything spawned in play. Each writes what RB_BuildSprites gives it, its
+// billboard or its model's lights, and only triangles flagged RB_MESH_EMISSIVE. The GI bake
+// reads them as omni lights, so a billboard's facing does not matter. Returns the vertex
+// count, at most maxverts.
+int RB_BuildBakeLights(rb_vertex_t* out, int maxverts);
+
 // DOOM-0539: one more model drawn for a sprite; with several, each Thing shows one (DOOM-0641).
 // Takes ownership of *model and empties it. Returns 0 when the sprite already holds its fill.
 int  RB_AddSpriteModel(int sprite, rb_model_t* model);
